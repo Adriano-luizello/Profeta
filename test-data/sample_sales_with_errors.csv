@@ -1,0 +1,8 @@
+date,product,category,quantity,price,description
+2024-01-15,Camiseta Azul,Roupas,10,29.90,Tamanho M
+2024-01-16,,Roupas,5,89.90,Produto sem nome
+invalid-date,Tênis Esportivo,Calçados,8,159.90,Data inválida
+2024-01-18,Camiseta Verde,Roupas,-5,29.90,Quantidade negativa
+2024-01-19,Bone Preto,Acessórios,20,,Preço vazio
+2024-01-20,Calça Jeans,Roupas,abc,89.90,Quantidade não é número
+2024-01-21,Tênis Esportivo,Calçados,12,159.90,Linha válida

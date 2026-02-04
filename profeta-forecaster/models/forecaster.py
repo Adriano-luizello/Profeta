@@ -416,15 +416,13 @@ class ProphetForecaster:
         )
         
         # Forecast por produto
-        debug_info: Optional[Dict] = None
         if by_product:
             logger.info("🔮 Gerando forecast por produto...")
-            product_forecasts, debug_info = self._forecast_by_product(
+            response.product_forecasts = self._forecast_by_product(
                 products,
                 historical_data,
                 forecast_days,
             )
-            response.product_forecasts = product_forecasts
         
         # Forecast por categoria
         if by_category:
@@ -442,8 +440,6 @@ class ProphetForecaster:
             "forecast_horizons": forecast_days,
             "generated_at": datetime.now().isoformat()
         }
-        if debug_info:
-            response.stats["debug_info"] = debug_info
         
         # Salvar no banco
         await self._save_forecast(response)
@@ -631,7 +627,6 @@ class ProphetForecaster:
                     logger.warning(f"  ✗ [{completed}/{total}] {product_id}: {e}")
 
         forecasts = []
-        first_product_debug_info: Optional[Dict] = None
         for product in products:
             product_id = product["id"]
             if product_id not in results_by_id:
@@ -653,11 +648,7 @@ class ProphetForecaster:
 
             # Model Router: escolher melhor modelo por horizonte (XGBoost, Prophet ou Ensemble)
             product_id_str = str(product_id)
-            logger.info(
-                f"🔍 Buscando XGBoost para produto {product_name[:30]} (id={product_id_str[:8]}...)"
-            )
             xgb_raw = self._fetch_xgboost_forecasts(product_id_str)
-            logger.info(f"🔍 XGBoost retornou {len(xgb_raw) if xgb_raw else 0} pontos")
             xgb_metrics = self._fetch_xgboost_metrics(product_id_str)
             if not xgb_raw:
                 logger.info(
@@ -706,23 +697,6 @@ class ProphetForecaster:
                 product_name=product_name,
             )
 
-            # Log DEBUG ANTES da conversão
-            if forecast_30d_final and len(forecast_30d_final) > 0:
-                total_final = sum(p.get("predicted_quantity", 0) for p in forecast_30d_final)
-                logger.info(
-                    f"🔍 ANTES conversão: forecast_30d_final tem {len(forecast_30d_final)} pts, "
-                    f"primeiro={forecast_30d_final[0].get('predicted_quantity', 0):.1f}, total={total_final:.1f}"
-                )
-            else:
-                logger.info("⚠️ forecast_30d_final está vazio ou None - usará prophet_30d")
-
-            if prophet_30d and len(prophet_30d) > 0:
-                total_prophet = sum(getattr(p, "predicted_quantity", 0) for p in prophet_30d)
-                p_first = getattr(prophet_30d[0], "predicted_quantity", 0)
-                logger.info(
-                    f"🔍 Prophet original: {len(prophet_30d)} pts, primeiro={p_first:.1f}, total={total_prophet:.1f}"
-                )
-
             # Usar forecast_final (Model Router) - NUNCA Prophet original
             forecast_30d_for_product = (
                 to_forecast_data_points(forecast_30d_final)
@@ -739,16 +713,6 @@ class ProphetForecaster:
                 if forecast_90d_final
                 else prophet_90d
             )
-
-            # Log DEBUG DEPOIS da conversão
-            if forecast_30d_for_product and len(forecast_30d_for_product) > 0:
-                primeiro = forecast_30d_for_product[0]
-                pred = primeiro.get("predicted_quantity") if isinstance(primeiro, dict) else getattr(primeiro, "predicted_quantity", None)
-                total_fp = sum(p.get("predicted_quantity", 0) if isinstance(p, dict) else getattr(p, "predicted_quantity", 0) for p in forecast_30d_for_product)
-                logger.info(
-                    f"🔍 DEPOIS conversão: forecast_30d_for_product tem {len(forecast_30d_for_product)} pts, "
-                    f"primeiro={(pred or 0):.1f}, total={total_fp:.1f}"
-                )
 
             # Atualizar metrics com MAPE do modelo escolhido (30d) para refletir no dashboard
             selection_30d = model_router.select_model(
@@ -785,46 +749,11 @@ class ProphetForecaster:
                     sample_size=metrics.sample_size,
                 )
 
-            # Debug temporário: verificar qual valor está sendo usado
-            def _first_pred(lst):
-                if not lst:
-                    return None
-                if isinstance(lst[0], dict):
-                    return lst[0].get("predicted_quantity")
-                return getattr(lst[0], "predicted_quantity", None)
-
-            p0 = _first_pred(prophet_30d)
-            f0 = _first_pred(forecast_30d_final)
-            fp0 = _first_pred(forecast_30d_for_product)
-            total_prophet = sum(getattr(p, "predicted_quantity", 0) for p in prophet_30d) if prophet_30d else 0
-            total_final = sum(d.get("predicted_quantity", 0) for d in forecast_30d_final) if forecast_30d_final else 0
-            total_for_product = sum(getattr(p, "predicted_quantity", 0) for p in forecast_30d_for_product) if forecast_30d_for_product else 0
-
-            logger.info(
-                f"🔍 DEBUG {product_name[:40]}: "
-                f"Prophet[0]={(p0 or 0):.1f} total={total_prophet:.0f} | "
-                f"Final[0]={(f0 or 0):.1f} total={total_final:.0f} | "
-                f"ForProduct[0]={(fp0 or 0):.1f} total={total_for_product:.0f} | "
-                f"xgb_raw={len(xgb_raw) if xgb_raw else 0} pts"
-            )
-
-            # Debug info para resposta (primeiro produto)
-            first_product_debug = {
-                "xgb_raw_count": len(xgb_raw) if xgb_raw else 0,
-                "forecast_30d_final_exists": bool(forecast_30d_final),
-                "forecast_30d_final_total": round(total_final, 1),
-                "prophet_30d_total": round(total_prophet, 1),
-                "forecast_30d_for_product_total": round(total_for_product, 1),
-                "first_product_name": product_name[:50],
-            }
-
             recommendations = self._generate_recommendations(
                 product,
                 forecast_30d_for_product,
                 metrics,
             )
-            if first_product_debug_info is None:
-                first_product_debug_info = first_product_debug
             forecasts.append(
                 ProductForecast(
                     product_id=product_id,
@@ -840,7 +769,7 @@ class ProphetForecaster:
             )
 
         logger.info(f"✅ Forecast por produto concluído: {len(forecasts)}/{total} produtos")
-        return forecasts, first_product_debug_info
+        return forecasts
 
     def _forecast_by_category(
         self,
@@ -1142,17 +1071,6 @@ class ProphetForecaster:
             )
 
             data = response.data if hasattr(response, "data") else []
-            logger.info(
-                f"🔍 _fetch_xgboost_forecasts({product_id_str[:8]}...): "
-                f"encontrados {len(data) if data else 0} pontos na query"
-            )
-            if data:
-                first = data[0]
-                logger.info(
-                    f"   Primeiro ponto: date={first.get('forecast_date')}, "
-                    f"qty={first.get('predicted_quantity')}"
-                )
-
             if not data:
                 return []
 
@@ -1168,8 +1086,6 @@ class ProphetForecaster:
             return result
         except Exception as e:
             logger.warning(f"Erro ao buscar XGBoost para {product_id}: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
             return []
 
     def _fetch_xgboost_metrics(self, product_id: str) -> Optional[Dict]:
@@ -1420,7 +1336,7 @@ class ProphetForecaster:
         """Busca forecast existente"""
         try:
             # TODO: Implementar busca no banco
-            logger.info(f"🔍 Buscando forecast para {analysis_id}")
+            logger.info(f"Buscando forecast para {analysis_id}")
             return None
         except Exception as e:
             logger.error(f"❌ Erro ao buscar forecast: {e}")

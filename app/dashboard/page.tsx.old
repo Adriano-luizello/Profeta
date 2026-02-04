@@ -1,0 +1,167 @@
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
+import Link from 'next/link'
+
+export default async function DashboardPage() {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  // Fetch recent analyses
+  const { data: analyses } = await supabase
+    .from('analyses')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  const handleSignOut = async () => {
+    'use server'
+    const supabase = await createClient()
+    await supabase.auth.signOut()
+    redirect('/')
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Header */}
+      <header className="bg-white dark:bg-gray-800 shadow">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+          <Link href="/dashboard">
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent cursor-pointer">
+              Profeta
+            </h1>
+          </Link>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-600 dark:text-gray-400">
+              {user.email}
+            </span>
+            <form action={handleSignOut}>
+              <button
+                type="submit"
+                className="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Sign Out
+              </button>
+            </form>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-8">
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+            Welcome to Your Dashboard
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            Start by uploading your inventory data to get AI-powered forecasts and recommendations.
+          </p>
+        </div>
+
+        {/* Quick Actions */}
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+            <div className="text-4xl mb-4">📊</div>
+            <h3 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white">
+              Upload CSV
+            </h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Upload your sales history to start forecasting
+            </p>
+            <Link href="/dashboard/upload" className="block w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors text-center">
+              Upload Now
+            </Link>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+            <div className="text-4xl mb-4">📈</div>
+            <h3 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white">
+              View Analyses
+            </h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Review your past forecasting analyses
+            </p>
+            <button className="w-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white font-medium py-2 px-4 rounded-lg transition-colors">
+              Coming Soon
+            </button>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+            <div className="text-4xl mb-4">⚙️</div>
+            <h3 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white">
+              Settings
+            </h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Manage your account and preferences
+            </p>
+            <button className="w-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white font-medium py-2 px-4 rounded-lg transition-colors">
+              Coming Soon
+            </button>
+          </div>
+        </div>
+
+        {/* Recent Analyses */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
+            Recent Analyses
+          </h3>
+          <div className="mb-4 p-3 bg-yellow-200 text-black font-bold rounded">
+            🔍 DEBUG: Análises encontradas: {analyses?.length || 0}
+          </div>
+          {!analyses || analyses.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="text-6xl mb-4">📦</div>
+              <p className="text-gray-600 dark:text-gray-400 mb-2">
+                No analyses yet
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-500">
+                Upload your first CSV file to get started
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {analyses.map((analysis) => (
+                <div
+                  key={analysis.id}
+                  className="border border-gray-200 dark:border-gray-700 rounded-lg p-4"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-gray-900 dark:text-white mb-1">
+                          {analysis.file_name}
+                        </h4>
+                        <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+                          <span>📊 {analysis.total_products} produtos</span>
+                          <span>📅 {new Date(analysis.created_at).toLocaleDateString('pt-BR')}</span>
+                        </div>
+                      </div>
+                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        {analysis.status === 'completed' ? '✅ Concluído' : '⏳ Processando'}
+                      </span>
+                    </div>
+                    <form action={`/api/analyses/${analysis.id}/clean`} method="POST">
+                      <button
+                        type="submit"
+                        className="w-full px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-lg transition-all"
+                      >
+                        🧹 Limpar Dados com IA (GPT-4)
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  )
+}

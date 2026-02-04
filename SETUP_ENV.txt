@@ -1,0 +1,21 @@
+# Copy this entire content to create your .env.local file
+
+# ==============================================================
+# STEP 1: Create the .env.local file
+# ==============================================================
+# Run this command in your terminal:
+# echo "# Supabase Configuration" > .env.local
+
+# ==============================================================
+# STEP 2: Add these lines to .env.local
+# ==============================================================
+
+NEXT_PUBLIC_SUPABASE_URL=https://hkrbqmdigjonqrgofgms.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhrcmJxbWRpZ2pvbnFyZ29mZ21zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3OTMzNjAsImV4cCI6MjA4NDM2OTM2MH0.pHOlRo1Idju0Z8oe9UgW6a-rDuPzmScGpQDCE6dIUcw
+SUPABASE_SERVICE_ROLE_KEY=paste-your-service-role-key-here
+NEXT_PUBLIC_APP_URL=http://localhost:3001
+
+# ==============================================================
+# IMPORTANT: Replace "paste-your-service-role-key-here" with your actual service_role key
+# Get it from: Supabase Dashboard -> Settings -> API -> Service Role
+# ==============================================================

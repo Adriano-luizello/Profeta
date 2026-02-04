@@ -1,0 +1,228 @@
+'use client'
+
+/**
+ * Gráfico de forecast com Chart.js
+ * Mostra dados históricos + previsão com intervalo de confiança
+ */
+
+import { Line } from 'react-chartjs-2'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+  type ChartData,
+  type ChartOptions
+} from 'chart.js'
+import { format } from 'date-fns'
+import { ptBR } from 'date-fns/locale'
+import type {
+  HistoricalDataPoint,
+  ForecastDataPoint,
+  ForecastHorizon
+} from '@/types/forecasting'
+
+// Registrar componentes do Chart.js
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+)
+
+interface ForecastChartProps {
+  historical: HistoricalDataPoint[]
+  forecast30d?: ForecastDataPoint[]
+  forecast60d?: ForecastDataPoint[]
+  forecast90d?: ForecastDataPoint[]
+  selectedHorizon?: ForecastHorizon
+  title?: string
+  productName?: string
+}
+
+export function ForecastChart({
+  historical,
+  forecast30d = [],
+  forecast60d = [],
+  forecast90d = [],
+  selectedHorizon = '30d',
+  title,
+  productName
+}: ForecastChartProps) {
+  // Selecionar dados do forecast baseado no horizonte
+  const forecastData =
+    selectedHorizon === '30d'
+      ? forecast30d
+      : selectedHorizon === '60d'
+      ? forecast60d
+      : forecast90d
+
+  // Preparar labels (datas)
+  const historicalLabels = historical.map((d) =>
+    format(new Date(d.date), 'dd/MM', { locale: ptBR })
+  )
+  const forecastLabels = forecastData.map((d) =>
+    format(new Date(d.date), 'dd/MM', { locale: ptBR })
+  )
+  const allLabels = [...historicalLabels, ...forecastLabels]
+
+  // Dados históricos
+  const historicalQuantities = historical.map((d) => d.quantity)
+  
+  // Dados previstos
+  const forecastQuantities = forecastData.map((d) => d.predicted_quantity)
+  
+  // Intervalos de confiança
+  const lowerBounds = forecastData.map((d) => d.lower_bound)
+  const upperBounds = forecastData.map((d) => d.upper_bound)
+
+  // Dados do gráfico
+  const chartData: ChartData<'line'> = {
+    labels: allLabels,
+    datasets: [
+      // Linha histórica (azul)
+      {
+        label: 'Histórico',
+        data: [
+          ...historicalQuantities,
+          ...Array(forecastData.length).fill(null)
+        ],
+        borderColor: 'rgb(59, 130, 246)',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 2,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        tension: 0.3
+      },
+      // Linha de previsão (verde)
+      {
+        label: 'Previsão',
+        data: [
+          ...Array(historical.length).fill(null),
+          ...forecastQuantities
+        ],
+        borderColor: 'rgb(34, 197, 94)',
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        borderWidth: 2,
+        borderDash: [5, 5],
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        tension: 0.3
+      },
+      // Intervalo superior (área sombreada)
+      {
+        label: 'Intervalo de Confiança (80%)',
+        data: [
+          ...Array(historical.length).fill(null),
+          ...upperBounds
+        ],
+        borderColor: 'rgba(34, 197, 94, 0.2)',
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        borderWidth: 1,
+        pointRadius: 0,
+        fill: '+1',
+        tension: 0.3
+      },
+      // Intervalo inferior (área sombreada)
+      {
+        label: '',
+        data: [
+          ...Array(historical.length).fill(null),
+          ...lowerBounds
+        ],
+        borderColor: 'rgba(34, 197, 94, 0.2)',
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        borderWidth: 1,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.3
+      }
+    ]
+  }
+
+  // Opções do gráfico
+  const options: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index',
+      intersect: false
+    },
+    plugins: {
+      legend: {
+        display: true,
+        position: 'top',
+        labels: {
+          filter: (item) => item.text !== '' // Remover label vazio do lower bound
+        }
+      },
+      title: {
+        display: !!title,
+        text: title || `Previsão: ${productName || ''}`,
+        font: {
+          size: 16,
+          weight: 'bold'
+        }
+      },
+      tooltip: {
+        callbacks: {
+          label: function (context) {
+            let label = context.dataset.label || ''
+            if (label) {
+              label += ': '
+            }
+            if (context.parsed.y !== null) {
+              label += context.parsed.y.toFixed(1) + ' unidades'
+            }
+            return label
+          }
+        }
+      }
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
+        title: {
+          display: true,
+          text: 'Quantidade'
+        },
+        ticks: {
+          callback: function (value) {
+            return value + ' un'
+          }
+        }
+      },
+      x: {
+        title: {
+          display: true,
+          text: 'Data'
+        },
+        ticks: {
+          maxRotation: 45,
+          minRotation: 45,
+          maxTicksLimit: 16,
+          autoSkip: true,
+          callback: function (_value: unknown, index: number) {
+            const step = Math.max(1, Math.floor(allLabels.length / 14))
+            return index % step === 0 ? allLabels[index] : ''
+          }
+        }
+      }
+    }
+  }
+
+  return (
+    <div className="w-full h-[400px] p-4 bg-white rounded-lg shadow">
+      <Line data={chartData} options={options} />
+    </div>
+  )
+}

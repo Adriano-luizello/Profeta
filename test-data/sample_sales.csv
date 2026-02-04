@@ -1,0 +1,31 @@
+date,product,category,quantity,price,description
+2024-01-15,Camiseta Azul,Roupas,10,29.90,Tamanho M
+2024-01-16,Calça Jeans,Roupas,5,89.90,Tamanho 42
+2024-01-17,Tênis Esportivo,Calçados,8,159.90,Tamanho 40
+2024-01-18,Camiseta Azul,Roupas,15,29.90,Tamanho G
+2024-01-19,Bone Preto,Acessórios,20,35.00,Ajustável
+2024-01-20,Calça Jeans,Roupas,7,89.90,Tamanho 44
+2024-01-21,Tênis Esportivo,Calçados,12,159.90,Tamanho 42
+2024-01-22,Jaqueta de Couro,Roupas,3,299.90,Tamanho M
+2024-01-23,Camiseta Azul,Roupas,18,29.90,Tamanho P
+2024-01-24,Bone Preto,Acessórios,25,35.00,Ajustável
+2024-01-25,Mochila Escolar,Acessórios,10,89.00,30 litros
+2024-01-26,Tênis Esportivo,Calçados,6,159.90,Tamanho 38
+2024-01-27,Camiseta Azul,Roupas,22,29.90,Tamanho M
+2024-01-28,Calça Jeans,Roupas,9,89.90,Tamanho 40
+2024-01-29,Jaqueta de Couro,Roupas,4,299.90,Tamanho G
+2024-01-30,Bone Preto,Acessórios,30,35.00,Ajustável
+2024-02-01,Camiseta Azul,Roupas,25,29.90,Tamanho G
+2024-02-02,Tênis Esportivo,Calçados,15,159.90,Tamanho 41
+2024-02-03,Mochila Escolar,Acessórios,12,89.00,30 litros
+2024-02-04,Calça Jeans,Roupas,11,89.90,Tamanho 42
+2024-02-05,Bone Preto,Acessórios,35,35.00,Ajustável
+2024-02-06,Camiseta Azul,Roupas,28,29.90,Tamanho P
+2024-02-07,Jaqueta de Couro,Roupas,5,299.90,Tamanho M
+2024-02-08,Tênis Esportivo,Calçados,18,159.90,Tamanho 40
+2024-02-09,Mochila Escolar,Acessórios,14,89.00,30 litros
+2024-02-10,Calça Jeans,Roupas,13,89.90,Tamanho 44
+2024-02-11,Bone Preto,Acessórios,40,35.00,Ajustável
+2024-02-12,Camiseta Azul,Roupas,32,29.90,Tamanho M
+2024-02-13,Tênis Esportivo,Calçados,20,159.90,Tamanho 42
+2024-02-14,Jaqueta de Couro,Roupas,6,299.90,Tamanho G

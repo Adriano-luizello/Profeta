@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp",
+      "env": {
+        "SUPABASE_PROJECT_REF": "hkrbqmdigjgjonqrgofgms"
+      }
+    },
+    "vercel": {
+      "url": "https://mcp.vercel.com"
+    }
+  }
+}
