@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, Upload, Settings, LogOut, Truck } from 'lucide-react'
+import { LayoutDashboard, Upload, Settings, LogOut } from 'lucide-react'
 import { ChatSidebar } from '@/components/chat/ChatSidebar'
 
 export default async function DashboardLayout({
@@ -45,13 +45,6 @@ export default async function DashboardLayout({
           >
             <Settings className="size-4" />
             Configurações
-          </Link>
-          <Link
-            href="/dashboard/settings#fornecedores"
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-          >
-            <Truck className="size-4" />
-            Fornecedores
           </Link>
         </nav>
         <div className="p-3 border-t border-gray-200 dark:border-gray-700">

@@ -231,7 +231,7 @@ export default function UploadPage() {
         const first = transformResult.errors[0]
         setError(
           `Erro ao transformar dados: ${transformResult.errors.length} linha(s) com erro. ` +
-            `Primeira: ${first?.reason ?? first?.message ?? 'erro desconhecido'}`
+            `Primeira: ${first?.reason ?? 'erro desconhecido'}`
         )
         setStep('map')
         return

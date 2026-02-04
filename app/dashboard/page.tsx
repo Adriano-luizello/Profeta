@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { Upload, BarChart3 } from 'lucide-react'
+import { Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getLatestAnalysisWithDetails } from '@/lib/dashboard-data'
 import { getForecastFromDb } from '@/lib/services/run-forecast'
@@ -9,7 +10,7 @@ import { DashboardAnalysisView } from '@/components/dashboard/analysis/Dashboard
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
+  if (!user) redirect('/login')
 
   const analysis = await getLatestAnalysisWithDetails(supabase, user.id)
 
@@ -76,12 +77,6 @@ export default async function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" asChild>
-            <Link href={`/dashboard/${analysis.id}`} className="inline-flex items-center gap-2">
-              <BarChart3 className="size-4" />
-              Projeções (Model Router)
-            </Link>
-          </Button>
           <Button asChild>
             <Link href="/dashboard/upload" className="inline-flex items-center gap-2">
               <Upload className="size-4" />
