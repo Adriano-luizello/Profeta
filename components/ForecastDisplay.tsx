@@ -53,9 +53,9 @@ export function ForecastDisplay({
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {generating ? (
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-2" title="Processamento em andamento">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                Gerando...
+                Processando… (pode levar alguns minutos)
               </span>
             ) : (
               '📈 Gerar Forecast Agora'

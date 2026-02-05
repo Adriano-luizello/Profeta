@@ -12,8 +12,8 @@ import type {
 // URL da Python API (configurável via env)
 const PYTHON_API_URL = process.env.NEXT_PUBLIC_PYTHON_API_URL || 'http://localhost:8000'
 
-// Timeout para forecast (50+ produtos pode levar até ~15 min)
-const FORECAST_TIMEOUT_MS = 15 * 60 * 1000
+// Timeout para forecast (múltiplos produtos: Prophet + XGBoost pode levar 2–5 min ou mais)
+const FORECAST_TIMEOUT_MS = 600_000 // 10 minutos
 
 // Agent com timeout para headers/body (evita UND_ERR_HEADERS_TIMEOUT no Node)
 const LONG_FETCH_AGENT = new Agent({
@@ -70,7 +70,7 @@ export class ForecastClient {
           by_product: request.by_product ?? true,
           by_category: request.by_category ?? true,
         }),
-        // Timeout de 15 min (AbortSignal)
+        // Timeout de 10 min (AbortSignal)
         signal: AbortSignal.timeout(FORECAST_TIMEOUT_MS),
         // Evita UND_ERR_HEADERS_TIMEOUT: undici espera headers/body até o timeout
         dispatcher: LONG_FETCH_AGENT,
@@ -100,7 +100,7 @@ export class ForecastClient {
         console.error('❌ Timeout no forecast')
         throw new Error(
           'Timeout: O forecast está demorando mais que o esperado. ' +
-            'Para 50+ produtos, aguarde até 15 minutos.'
+            'Para muitos produtos, o processamento pode levar até 10 minutos.'
         )
       }
 

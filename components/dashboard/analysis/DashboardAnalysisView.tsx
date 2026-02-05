@@ -61,6 +61,7 @@ export function DashboardAnalysisView({
           by_product: true,
           by_category: true,
         }),
+        signal: AbortSignal.timeout(600_000), // 10 min — backend Prophet + XGBoost pode levar 2–5 min
       })
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))

@@ -53,6 +53,7 @@ export function ForecastSection({
           by_product: true,
           by_category: true,
         }),
+        signal: AbortSignal.timeout(600_000), // 10 min — backend Prophet + XGBoost pode levar 2–5 min
       })
       if (!response.ok) {
         const data = await response.json()
@@ -80,7 +81,8 @@ export function ForecastSection({
                 📈 Previsão de Demanda
               </h2>
               <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                Gere previsões de vendas para os próximos 30, 60 e 90 dias usando IA
+                Gere previsões de vendas para os próximos 30, 60 e 90 dias usando IA.
+                O processamento pode levar alguns minutos quando há vários produtos.
               </p>
             </div>
             <GenerateForecastButton
