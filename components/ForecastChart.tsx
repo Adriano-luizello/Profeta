@@ -58,6 +58,11 @@ export function ForecastChart({
   title,
   productName
 }: ForecastChartProps) {
+  // Mostrar apenas últimos 6 meses de histórico + projeção (evita timeline longa que comprime a previsão)
+  const sixMonthsAgo = new Date()
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
+  const recentHistorical = historical.filter((d) => new Date(d.date) >= sixMonthsAgo)
+
   // Selecionar dados do forecast baseado no horizonte
   const forecastData =
     selectedHorizon === '30d'
@@ -66,8 +71,8 @@ export function ForecastChart({
       ? forecast60d
       : forecast90d
 
-  // Preparar labels (datas)
-  const historicalLabels = historical.map((d) =>
+  // Preparar labels (datas) — usar histórico recente para o gráfico
+  const historicalLabels = recentHistorical.map((d) =>
     format(new Date(d.date), 'dd/MM', { locale: ptBR })
   )
   const forecastLabels = forecastData.map((d) =>
@@ -75,8 +80,8 @@ export function ForecastChart({
   )
   const allLabels = [...historicalLabels, ...forecastLabels]
 
-  // Dados históricos
-  const historicalQuantities = historical.map((d) => d.quantity)
+  // Dados históricos (recentes)
+  const historicalQuantities = recentHistorical.map((d) => d.quantity)
   
   // Dados previstos
   const forecastQuantities = forecastData.map((d) => d.predicted_quantity)
@@ -107,7 +112,7 @@ export function ForecastChart({
       {
         label: 'Previsão',
         data: [
-          ...Array(historical.length).fill(null),
+          ...Array(recentHistorical.length).fill(null),
           ...forecastQuantities
         ],
         borderColor: 'rgb(34, 197, 94)',
@@ -122,7 +127,7 @@ export function ForecastChart({
       {
         label: 'Intervalo de Confiança (80%)',
         data: [
-          ...Array(historical.length).fill(null),
+          ...Array(recentHistorical.length).fill(null),
           ...upperBounds
         ],
         borderColor: 'rgba(34, 197, 94, 0.2)',
@@ -136,7 +141,7 @@ export function ForecastChart({
       {
         label: '',
         data: [
-          ...Array(historical.length).fill(null),
+          ...Array(recentHistorical.length).fill(null),
           ...lowerBounds
         ],
         borderColor: 'rgba(34, 197, 94, 0.2)',

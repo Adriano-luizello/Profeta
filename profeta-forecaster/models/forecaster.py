@@ -878,6 +878,18 @@ class ProphetForecaster:
             forecast_30d = self._extract_forecast_period(forecast_result, aggregated_df, 30)
             forecast_60d = self._extract_forecast_period(forecast_result, aggregated_df, 60)
             forecast_90d = self._extract_forecast_period(forecast_result, aggregated_df, 90)
+
+            # Se dados agregados são mensais, agregar previsões diárias em mensais (mesma escala que histórico)
+            if self._is_historical_monthly(aggregated_df):
+                def _to_dict_list_fc(pts):
+                    return [
+                        {"date": p.date, "predicted_quantity": p.predicted_quantity, "lower_bound": p.lower_bound, "upper_bound": p.upper_bound}
+                        for p in pts
+                    ]
+                forecast_30d = [ForecastDataPoint(**d) for d in self._aggregate_daily_to_monthly(_to_dict_list_fc(forecast_30d))]
+                forecast_60d = [ForecastDataPoint(**d) for d in self._aggregate_daily_to_monthly(_to_dict_list_fc(forecast_60d))]
+                forecast_90d = [ForecastDataPoint(**d) for d in self._aggregate_daily_to_monthly(_to_dict_list_fc(forecast_90d))]
+                logger.info(f"  [{category}] Previsões agregadas para mensal (categoria)")
             
             # Calcular métricas
             metrics = self._calculate_metrics(aggregated_df, forecast_result, {"seasonality": "year-round"})
