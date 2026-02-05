@@ -1378,7 +1378,7 @@ class ProphetForecaster:
         self,
         daily_forecast: List[Dict],
         df: pd.DataFrame,
-        max_multiplier: float = 3.0,
+        max_multiplier: float = 1.5,
     ) -> List[Dict]:
         """
         Limita cada previsão diária a max_multiplier * (máximo diário histórico).
@@ -1428,7 +1428,7 @@ class ProphetForecaster:
         self,
         monthly_forecast: List[Dict],
         df: pd.DataFrame,
-        max_multiplier: float = 2.5,
+        max_multiplier: float = 1.5,
     ) -> List[Dict]:
         """
         Rede de segurança pós-agregação: nenhum mês pode exceder
