@@ -742,11 +742,21 @@ class ProphetForecaster:
                 forecast_90d_final, xgb_90d, product_name, 90, historical_mean
             )
 
+            # === CLAMP: limitar previsões diárias antes de agregar ===
+            forecast_30d_final = self._clamp_daily_forecasts(forecast_30d_final, df)
+            forecast_60d_final = self._clamp_daily_forecasts(forecast_60d_final, df)
+            forecast_90d_final = self._clamp_daily_forecasts(forecast_90d_final, df)
+
             # Se dados históricos são mensais, agregar previsões diárias em mensais (mesma escala no gráfico)
             if self._is_historical_monthly(df):
                 forecast_30d_final = self._aggregate_daily_to_monthly(forecast_30d_final)
                 forecast_60d_final = self._aggregate_daily_to_monthly(forecast_60d_final)
                 forecast_90d_final = self._aggregate_daily_to_monthly(forecast_90d_final)
+
+                # === CLAMP MENSAL: rede de segurança pós-agregação ===
+                forecast_30d_final = self._clamp_monthly_forecasts(forecast_30d_final, df)
+                forecast_60d_final = self._clamp_monthly_forecasts(forecast_60d_final, df)
+                forecast_90d_final = self._clamp_monthly_forecasts(forecast_90d_final, df)
                 logger.info(
                     f"  [{product_name}] Previsões agregadas para mensal (mesma escala que histórico)"
                 )
@@ -907,16 +917,31 @@ class ProphetForecaster:
             forecast_60d = self._extract_forecast_period(forecast_result, aggregated_df, 60)
             forecast_90d = self._extract_forecast_period(forecast_result, aggregated_df, 90)
 
+            def _to_dict_list_fc(pts):
+                return [
+                    {"date": p.date, "predicted_quantity": p.predicted_quantity, "lower_bound": p.lower_bound, "upper_bound": p.upper_bound}
+                    for p in pts
+                ]
+
+            # === CLAMP diário antes de agregar ===
+            forecast_30d_dict = self._clamp_daily_forecasts(_to_dict_list_fc(forecast_30d), aggregated_df)
+            forecast_60d_dict = self._clamp_daily_forecasts(_to_dict_list_fc(forecast_60d), aggregated_df)
+            forecast_90d_dict = self._clamp_daily_forecasts(_to_dict_list_fc(forecast_90d), aggregated_df)
+
             # Se dados agregados são mensais, agregar previsões diárias em mensais (mesma escala que histórico)
             if self._is_historical_monthly(aggregated_df):
-                def _to_dict_list_fc(pts):
-                    return [
-                        {"date": p.date, "predicted_quantity": p.predicted_quantity, "lower_bound": p.lower_bound, "upper_bound": p.upper_bound}
-                        for p in pts
-                    ]
-                forecast_30d = [ForecastDataPoint(**d) for d in self._aggregate_daily_to_monthly(_to_dict_list_fc(forecast_30d))]
-                forecast_60d = [ForecastDataPoint(**d) for d in self._aggregate_daily_to_monthly(_to_dict_list_fc(forecast_60d))]
-                forecast_90d = [ForecastDataPoint(**d) for d in self._aggregate_daily_to_monthly(_to_dict_list_fc(forecast_90d))]
+                forecast_30d_agg = self._aggregate_daily_to_monthly(forecast_30d_dict)
+                forecast_60d_agg = self._aggregate_daily_to_monthly(forecast_60d_dict)
+                forecast_90d_agg = self._aggregate_daily_to_monthly(forecast_90d_dict)
+
+                # === CLAMP mensal pós-agregação ===
+                forecast_30d_agg = self._clamp_monthly_forecasts(forecast_30d_agg, aggregated_df)
+                forecast_60d_agg = self._clamp_monthly_forecasts(forecast_60d_agg, aggregated_df)
+                forecast_90d_agg = self._clamp_monthly_forecasts(forecast_90d_agg, aggregated_df)
+
+                forecast_30d = [ForecastDataPoint(**d) for d in forecast_30d_agg]
+                forecast_60d = [ForecastDataPoint(**d) for d in forecast_60d_agg]
+                forecast_90d = [ForecastDataPoint(**d) for d in forecast_90d_agg]
                 logger.info(f"  [{category}] Previsões agregadas para mensal (categoria)")
             
             # Calcular métricas
@@ -1348,6 +1373,105 @@ class ProphetForecaster:
                 return xgb_data
 
         return forecast_data
+
+    def _clamp_daily_forecasts(
+        self,
+        daily_forecast: List[Dict],
+        df: pd.DataFrame,
+        max_multiplier: float = 3.0,
+    ) -> List[Dict]:
+        """
+        Limita cada previsão diária a max_multiplier * (máximo diário histórico).
+        Se histórico é mensal, estima máximo diário = max_mensal / 30.
+        Impede que Prophet gere picos absurdos que explodem ao agregar mensalmente.
+        """
+        if not daily_forecast or df is None or len(df) < 2:
+            return daily_forecast
+
+        hist_values = df["y"].dropna().tolist()
+        if not hist_values or max(hist_values) <= 0:
+            return daily_forecast
+
+        # Detectar se histórico é mensal ou diário
+        avg_gap = 1
+        if len(df) >= 2:
+            date_range_days = (df["ds"].max() - df["ds"].min()).days
+            avg_gap = date_range_days / max(1, len(df) - 1)
+
+        max_hist = max(hist_values)
+
+        if avg_gap > 20:
+            # Histórico mensal → estimar máximo diário
+            max_daily = max_hist / 30.0
+        else:
+            max_daily = max_hist
+
+        # Floor mínimo para produtos com histórico muito baixo
+        max_daily = max(max_daily, 0.5)
+        cap = max_daily * max_multiplier
+
+        clamped = []
+        for point in daily_forecast:
+            pred = point.get("predicted_quantity", 0)
+            clamped_pred = max(0, min(pred, cap))
+            ratio = clamped_pred / pred if pred > 0 else 1.0
+            clamped.append({
+                **point,
+                "predicted_quantity": clamped_pred,
+                "lower_bound": max(0, point.get("lower_bound", 0) * ratio),
+                "upper_bound": max(0, point.get("upper_bound", 0) * ratio),
+            })
+
+        return clamped
+
+    def _clamp_monthly_forecasts(
+        self,
+        monthly_forecast: List[Dict],
+        df: pd.DataFrame,
+        max_multiplier: float = 2.5,
+    ) -> List[Dict]:
+        """
+        Rede de segurança pós-agregação: nenhum mês pode exceder
+        max_multiplier * (máximo mensal histórico).
+        """
+        if not monthly_forecast or df is None or len(df) < 2:
+            return monthly_forecast
+
+        hist_values = df["y"].dropna().tolist()
+        if not hist_values or max(hist_values) <= 0:
+            return monthly_forecast
+
+        # Detectar se histórico é mensal ou diário
+        date_range_days = (df["ds"].max() - df["ds"].min()).days
+        avg_gap = date_range_days / max(1, len(df) - 1)
+
+        if avg_gap > 20:
+            # Já mensal
+            max_monthly = max(hist_values)
+        else:
+            # Diário → agrupar por mês e pegar máximo
+            df_copy = df.copy()
+            df_copy["month"] = df_copy["ds"].dt.to_period("M")
+            monthly_sums = df_copy.groupby("month")["y"].sum()
+            max_monthly = monthly_sums.max() if len(monthly_sums) > 0 else max(hist_values)
+
+        cap = max_monthly * max_multiplier
+
+        clamped = []
+        for point in monthly_forecast:
+            pred = point.get("predicted_quantity", 0)
+            if pred > cap and cap > 0:
+                ratio = cap / pred
+                clamped.append({
+                    **point,
+                    "predicted_quantity": cap,
+                    "lower_bound": point.get("lower_bound", 0) * ratio,
+                    "upper_bound": point.get("upper_bound", 0) * ratio,
+                })
+            else:
+                clamped.append(point)
+
+        return clamped
 
     def _is_historical_monthly(self, df: pd.DataFrame) -> bool:
         """
