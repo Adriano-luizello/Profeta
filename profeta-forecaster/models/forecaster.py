@@ -786,6 +786,17 @@ class ProphetForecaster:
                     sample_size=metrics.sample_size,
                 )
 
+            # Log valores finais por horizonte (investigação de inconsistências 30d/60d/90d)
+            logger.info(
+                f"  [{product_name}] FINAL forecast_30d: {[round(f.predicted_quantity, 2) for f in forecast_30d_for_product]}"
+            )
+            logger.info(
+                f"  [{product_name}] FINAL forecast_60d: {[round(f.predicted_quantity, 2) for f in forecast_60d_for_product]}"
+            )
+            logger.info(
+                f"  [{product_name}] FINAL forecast_90d: {[round(f.predicted_quantity, 2) for f in forecast_90d_for_product]}"
+            )
+
             recommendations = self._generate_recommendations(
                 product,
                 forecast_30d_for_product,
@@ -1394,7 +1405,9 @@ class ProphetForecaster:
         weights: Dict[str, float],
     ) -> List[Dict]:
         """
-        Calcula ensemble ponderado entre Prophet e XGBoost.
+        Ensemble adaptativo: pondera Prophet e XGBoost ponto a ponto.
+        Quando Prophet diverge muito (ex.: ~0 em meses futuros), reduz peso do Prophet
+        para evitar puxar a previsão para baixo.
         """
         prophet_weight = weights.get("prophet", 0.5)
         xgboost_weight = weights.get("xgboost", 0.5)
@@ -1408,21 +1421,43 @@ class ProphetForecaster:
         for i in range(min_len):
             prophet_point = prophet_forecast[i]
             xgboost_point = xgboost_forecast[i]
-            ensemble_pred = (
-                prophet_point["predicted_quantity"] * prophet_weight
-                + xgboost_point["predicted_quantity"] * xgboost_weight
+            p_val = prophet_point["predicted_quantity"]
+            x_val = xgboost_point["predicted_quantity"]
+
+            # Ensemble adaptativo: se Prophet diverge muito do XGBoost, reduzir peso do Prophet
+            if x_val > 0:
+                ratio = p_val / x_val
+                if ratio < 0.1 or ratio > 10:
+                    effective_prophet_weight = 0.1
+                    effective_xgboost_weight = 0.9
+                    logger.debug(
+                        f"  Ensemble adaptativo ponto {i}: Prophet/XGBoost ratio={ratio:.1f}, usando 90% XGBoost"
+                    )
+                elif ratio < 0.3 or ratio > 3:
+                    effective_prophet_weight = 0.25
+                    effective_xgboost_weight = 0.75
+                else:
+                    effective_prophet_weight = prophet_weight
+                    effective_xgboost_weight = xgboost_weight
+            else:
+                effective_prophet_weight = prophet_weight
+                effective_xgboost_weight = xgboost_weight
+
+            ensemble_pred = p_val * effective_prophet_weight + x_val * effective_xgboost_weight
+            ensemble_lb = (
+                prophet_point.get("lower_bound", p_val * 0.8) * effective_prophet_weight
+                + xgboost_point.get("lower_bound", x_val * 0.8) * effective_xgboost_weight
             )
+            ensemble_ub = (
+                prophet_point.get("upper_bound", p_val * 1.2) * effective_prophet_weight
+                + xgboost_point.get("upper_bound", x_val * 1.2) * effective_xgboost_weight
+            )
+
             result.append({
                 "date": prophet_point["date"],
-                "predicted_quantity": ensemble_pred,
-                "lower_bound": prophet_point.get("lower_bound", ensemble_pred * 0.8)
-                * prophet_weight
-                + xgboost_point.get("lower_bound", ensemble_pred * 0.8)
-                * xgboost_weight,
-                "upper_bound": prophet_point.get("upper_bound", ensemble_pred * 1.2)
-                * prophet_weight
-                + xgboost_point.get("upper_bound", ensemble_pred * 1.2)
-                * xgboost_weight,
+                "predicted_quantity": max(0.0, ensemble_pred),
+                "lower_bound": max(0.0, ensemble_lb),
+                "upper_bound": max(0.0, ensemble_ub),
             })
 
         return result

@@ -82,13 +82,30 @@ export function ForecastChart({
 
   // Dados históricos (recentes)
   const historicalQuantities = recentHistorical.map((d) => d.quantity)
-  
-  // Dados previstos
+  const lastHistorical = recentHistorical[recentHistorical.length - 1]
+  const lastHistoricalQuantity = lastHistorical ? lastHistorical.quantity : 0
+
+  // Previsão: conectar ao último ponto histórico (sem gap visual)
   const forecastQuantities = forecastData.map((d) => d.predicted_quantity)
-  
-  // Intervalos de confiança
   const lowerBounds = forecastData.map((d) => d.lower_bound)
   const upperBounds = forecastData.map((d) => d.upper_bound)
+
+  // Série de previsão com ponto de conexão (último histórico = primeiro ponto da previsão)
+  const forecastSeriesData = [
+    ...Array(recentHistorical.length - 1).fill(null),
+    lastHistoricalQuantity,
+    ...forecastQuantities
+  ]
+  const lowerSeriesData = [
+    ...Array(recentHistorical.length - 1).fill(null),
+    lastHistoricalQuantity,
+    ...lowerBounds
+  ]
+  const upperSeriesData = [
+    ...Array(recentHistorical.length - 1).fill(null),
+    lastHistoricalQuantity,
+    ...upperBounds
+  ]
 
   // Dados do gráfico
   const chartData: ChartData<'line'> = {
@@ -108,13 +125,10 @@ export function ForecastChart({
         pointHoverRadius: 5,
         tension: 0.3
       },
-      // Linha de previsão (verde)
+      // Linha de previsão (verde) — conectada ao histórico
       {
         label: 'Previsão',
-        data: [
-          ...Array(recentHistorical.length).fill(null),
-          ...forecastQuantities
-        ],
+        data: forecastSeriesData,
         borderColor: 'rgb(34, 197, 94)',
         backgroundColor: 'rgba(34, 197, 94, 0.1)',
         borderWidth: 2,
@@ -123,15 +137,12 @@ export function ForecastChart({
         pointHoverRadius: 5,
         tension: 0.3
       },
-      // Intervalo superior (área sombreada)
+      // Intervalo superior (área sombreada) — mais visível
       {
         label: 'Intervalo de Confiança (80%)',
-        data: [
-          ...Array(recentHistorical.length).fill(null),
-          ...upperBounds
-        ],
-        borderColor: 'rgba(34, 197, 94, 0.2)',
-        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        data: upperSeriesData,
+        borderColor: 'rgba(34, 197, 94, 0.35)',
+        backgroundColor: 'rgba(34, 197, 94, 0.18)',
         borderWidth: 1,
         pointRadius: 0,
         fill: '+1',
@@ -140,12 +151,9 @@ export function ForecastChart({
       // Intervalo inferior (área sombreada)
       {
         label: '',
-        data: [
-          ...Array(recentHistorical.length).fill(null),
-          ...lowerBounds
-        ],
-        borderColor: 'rgba(34, 197, 94, 0.2)',
-        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        data: lowerSeriesData,
+        borderColor: 'rgba(34, 197, 94, 0.35)',
+        backgroundColor: 'rgba(34, 197, 94, 0.18)',
         borderWidth: 1,
         pointRadius: 0,
         fill: false,
@@ -180,15 +188,26 @@ export function ForecastChart({
       },
       tooltip: {
         callbacks: {
-          label: function (context) {
-            let label = context.dataset.label || ''
-            if (label) {
-              label += ': '
+          label: function (context: { datasetIndex: number; dataIndex: number; parsed: { y: number | null }; dataset: { label?: string } }) {
+            const label = context.dataset.label || ''
+            if (context.parsed.y === null) return label ? [label] : []
+            const idx = context.dataIndex
+            // Previsão (dataset 1): mostrar data, valor e intervalo
+            if (context.datasetIndex === 1) {
+              if (idx === recentHistorical.length - 1) {
+                return [label, `Conexão: ${context.parsed.y.toFixed(1)} un`]
+              }
+              if (idx >= recentHistorical.length) {
+                const pt = forecastData[idx - recentHistorical.length]
+                const dateStr = format(new Date(pt.date), "dd/MM/yyyy", { locale: ptBR })
+                return [
+                  `${dateStr}`,
+                  `Previsão: ${pt.predicted_quantity.toFixed(1)} un`,
+                  `Intervalo: ${pt.lower_bound.toFixed(0)} - ${pt.upper_bound.toFixed(0)} un`
+                ]
+              }
             }
-            if (context.parsed.y !== null) {
-              label += context.parsed.y.toFixed(1) + ' unidades'
-            }
-            return label
+            return [label ? `${label}: ${context.parsed.y.toFixed(1)} un` : `${context.parsed.y.toFixed(1)} un`]
           }
         }
       }
@@ -200,9 +219,10 @@ export function ForecastChart({
           display: true,
           text: 'Quantidade'
         },
+        grace: '8%',
         ticks: {
           callback: function (value) {
-            return value + ' un'
+            return typeof value === 'number' ? value + ' un' : ''
           }
         }
       },
