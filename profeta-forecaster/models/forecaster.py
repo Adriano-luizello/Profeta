@@ -5,6 +5,8 @@ Prophet Forecaster - Core forecasting logic
 import pandas as pd
 import numpy as np
 from prophet import Prophet
+from calendar import monthrange
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -723,6 +725,15 @@ class ProphetForecaster:
                 forecast_90d_final, xgb_90d, product_name, 90, historical_mean
             )
 
+            # Se dados históricos são mensais, agregar previsões diárias em mensais (mesma escala no gráfico)
+            if self._is_historical_monthly(df):
+                forecast_30d_final = self._aggregate_daily_to_monthly(forecast_30d_final)
+                forecast_60d_final = self._aggregate_daily_to_monthly(forecast_60d_final)
+                forecast_90d_final = self._aggregate_daily_to_monthly(forecast_90d_final)
+                logger.info(
+                    f"  [{product_name}] Previsões agregadas para mensal (mesma escala que histórico)"
+                )
+
             # Usar forecast_final (Model Router) - NUNCA Prophet original
             forecast_30d_for_product = (
                 to_forecast_data_points(forecast_30d_final)
@@ -1286,6 +1297,68 @@ class ProphetForecaster:
                 return xgb_data
 
         return forecast_data
+
+    def _is_historical_monthly(self, df: pd.DataFrame) -> bool:
+        """
+        Detecta se dados históricos são mensais (poucos pontos, intervalo grande entre datas).
+        Usado para agregar previsões diárias em mensais e manter mesma escala no gráfico.
+        """
+        if df is None or len(df) < 2:
+            return False
+        date_range_days = (df["ds"].max() - df["ds"].min()).days
+        n_points = len(df)
+        # Média de dias entre pontos consecutivos
+        avg_gap = date_range_days / max(1, n_points - 1)
+        # Se intervalo médio > 25 dias e poucos pontos, tratar como mensal
+        is_monthly = avg_gap > 25 and n_points <= 36
+        if is_monthly:
+            logger.debug(
+                f"  Dados históricos detectados como mensais: {n_points} pts, "
+                f"range {date_range_days}d, avg_gap={avg_gap:.0f}d"
+            )
+        return is_monthly
+
+    def _aggregate_daily_to_monthly(
+        self, daily_forecast: List[Dict]
+    ) -> List[Dict]:
+        """
+        Agregar previsões diárias em mensais para consistência com dados históricos mensais.
+        Retorna lista de dicts no mesmo formato (date, predicted_quantity, lower_bound, upper_bound).
+        """
+        if not daily_forecast:
+            return daily_forecast
+
+        monthly = defaultdict(
+            lambda: {"sum": 0.0, "count": 0, "lower_sum": 0.0, "upper_sum": 0.0}
+        )
+        for point in daily_forecast:
+            date_str = point.get("date", "")[:10]
+            if len(date_str) < 7:
+                continue
+            month_key = date_str[:7]  # "2026-01"
+            pred = point.get("predicted_quantity", 0)
+            lb = point.get("lower_bound", pred * 0.8)
+            ub = point.get("upper_bound", pred * 1.2)
+            monthly[month_key]["sum"] += pred
+            monthly[month_key]["count"] += 1
+            monthly[month_key]["lower_sum"] += lb
+            monthly[month_key]["upper_sum"] += ub
+
+        result = []
+        for month_key in sorted(monthly.keys()):
+            m = monthly[month_key]
+            if m["count"] == 0:
+                continue
+            year, month = int(month_key[:4]), int(month_key[5:7])
+            last_day = monthrange(year, month)[1]
+            date_str = f"{month_key}-{last_day:02d}"
+            result.append({
+                "date": date_str,
+                "predicted_quantity": m["sum"],
+                "lower_bound": m["lower_sum"],
+                "upper_bound": m["upper_sum"],
+            })
+        return result
 
     def _xgboost_to_prophet_format(self, xgb_forecast: List[Dict]) -> List[Dict]:
         """
