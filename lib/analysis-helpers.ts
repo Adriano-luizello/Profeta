@@ -124,6 +124,22 @@ export function getAggregatedChartData(forecast: ForecastResponse): {
     upper_bound: x.quantity * 1.2,
   }))
 
+  // Debug: inspecionar dados 30d/60d/90d para Vendas Totais (remover após validar)
+  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+    const avgGap = (pts: { date: string }[]) => {
+      if (pts.length < 2) return 0
+      const dates = pts.map((p) => new Date(p.date).getTime()).sort((a, b) => a - b)
+      return (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24) / (dates.length - 1)
+    }
+    console.log('[getAggregatedChartData] Vendas Totais:', {
+      raw: { 30: raw30.length, 60: raw60.length, 90: raw90.length },
+      afterAgg: { 30: agg30.length, 60: agg60.length, 90: agg90.length },
+      avgGapDays: { 30: avgGap(raw30).toFixed(1), 60: avgGap(raw60).toFixed(1), 90: avgGap(raw90).toFixed(1) },
+      sample60d: agg60.length ? [agg60[0]?.quantity, agg60[agg60.length - 1]?.quantity] : [],
+      sample90d: agg90.length ? [agg90[0]?.quantity, agg90[agg90.length - 1]?.quantity] : [],
+    })
+  }
+
   return { historical, forecast30d, forecast60d, forecast90d }
 }
 

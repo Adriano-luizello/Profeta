@@ -255,12 +255,8 @@ export function ForecastChart({
   }
 
   return (
-    <div className="w-full h-[400px] p-4 bg-white rounded-lg shadow">
-      <Line
-        key={selectedHorizon}
-        data={chartData}
-        options={options}
-      />
+    <div key={selectedHorizon} className="w-full h-[400px] p-4 bg-white rounded-lg shadow">
+      <Line data={chartData} options={options} />
     </div>
   )
 }
