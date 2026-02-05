@@ -1,7 +1,63 @@
 # 📍 Where We Left Off - Profeta MVP
 
-**Last Session Date**: 2026-02-03  
-**Status**: Dashboard Model Router em uso (30d ok); 60/90d com correção de shapes no ensemble — validar na próxima sessão.
+**Last Session Date**: 2026-02-04  
+**Status**: Código limpo, dashboard único, UI ok, build passando. **Pronto para deploy no Vercel.**
+
+---
+
+## 🧭 Sessão 2026-02-04 — Limpeza e preparação para deploy
+
+### O que foi feito
+
+1. **Backup (commit `d4b2bf4`)**
+   - Commit `backup: antes de remover dashboard secundário` com todo o estado antes da limpeza.
+
+2. **Remoção do dashboard secundário (Model Router)**
+   - Removido botão "Projeções (Model Router)" em `app/dashboard/page.tsx`.
+   - Removida rota `app/dashboard/[analysisId]/` (página inteira).
+   - Removido proxy `app/api/dashboard/[analysisId]/`.
+   - Removidos componentes exclusivos: `SummaryCards.tsx`, `TopProductsTable.tsx`.
+   - Removido hook `hooks/useDashboard.ts`.
+   - **Mantidos:** `PeriodSelector`, `lib/types/dashboard.ts`, `DashboardAnalysisView` e todo o dashboard principal.
+
+3. **Remoção do link duplicado "Fornecedores"**
+   - Menu lateral tinha "Configurações" e "Fornecedores" (ambos para a mesma tela). Removido o link "Fornecedores" e o ícone `Truck` de `app/dashboard/layout.tsx`. Acesso a fornecedores só via **Configurações** → `/dashboard/settings`.
+
+4. **Correções pontuais**
+   - `app/dashboard/upload/page.tsx`: `TransformError` usa `.reason` (não `.message`) para evitar erro de TypeScript no build.
+   - `app/dashboard/page.tsx`: sem usuário agora faz `redirect('/login')` em vez de `return null` (evita tela em branco).
+   - Adicionados `app/dashboard/loading.tsx` e `app/dashboard/error.tsx` para feedback de carregamento e erro.
+
+5. **UI quebrada (estilos não carregando)**
+   - **Causa:** existiam dois arquivos PostCSS: `postcss.config.js` (válido) e `postcss.config.mjs` (usava `module.exports` em ESM, inválido). O Next podia carregar o `.mjs` e o Tailwind não era aplicado.
+   - **Correção:** removido `postcss.config.mjs`. Mantido apenas `postcss.config.js`. Limpar `.next` e rebuild para aplicar.
+
+6. **Commit de limpeza (commit `e46cd40`)**
+   - Mensagem: `cleanup: remove dashboard secundário e link duplicado Fornecedores` com a lista das remoções e melhorias de UX.
+
+### Commits de referência
+
+| Commit     | Descrição |
+|-----------|-----------|
+| `d4b2bf4` | Backup antes de remover dashboard secundário |
+| `e46cd40` | Limpeza: dashboard secundário + link Fornecedores removidos |
+
+### Estado atual
+
+- **Dashboard:** apenas um (principal em `/dashboard`), com abas Geral e Produtos, período 30/60/90, forecast e KPIs.
+- **Menu lateral:** Dashboard, Upload, Configurações (fornecedores ficam em Configurações), Sair.
+- **Build:** `npm run build` passa sem erros.
+- **Configuração:** uma única `postcss.config.js` (Tailwind + Autoprefixer).
+
+### Se aparecer "Truck is not defined"
+
+O `layout.tsx` atual **não** usa `Truck` nem o link Fornecedores. Se o erro surgir, é cache: parar o dev server, `rm -rf .next`, `npm run dev` de novo.
+
+### Próximos passos (quando retomar)
+
+1. **Deploy no Vercel** — código pronto; configurar projeto, env vars (Supabase, etc.) e deploy.
+2. Testes em produção (login, upload, dashboard, configurações).
+3. Opcional: documentar no README o fluxo atual (um dashboard, menu, rotas).
 
 ---
 
@@ -9,7 +65,7 @@
 
 **Detalhamento completo:** ver **`docs/DASHBOARD_MODEL_ROUTER_STATUS.md`**.
 
-Resumo: Ajustamos Supabase (service role no backend), proxy Next para evitar CORS, erros NoneType/float no dashboard service e model_router, e **erro de shapes (3,) vs (60,)** no ensemble para 60/90 dias (alinhamento por padding no `calculate_ensemble_forecast`). Períodos 60 e 90 precisam ser testados após reiniciar o BE.
+Resumo: Ajustamos Supabase (service role no backend), proxy Next para evitar CORS, erros NoneType/float no dashboard service e model_router, e **erro de shapes (3,) vs (60,)** no ensemble para 60/90 dias (alinhamento por padding no `calculate_ensemble_forecast`). O dashboard Model Router foi **removido** na sessão 2026-02-04 (ver acima).
 
 ---
 
@@ -82,4 +138,4 @@ npm run dev
 
 ---
 
-**Última atualização:** 2026-01-27. Bom descanso; amanhã continuamos daqui. 🚀
+**Última atualização:** 2026-02-04. Pausa por hora; próxima sessão: deploy no Vercel ou testes adicionais. 🚀
