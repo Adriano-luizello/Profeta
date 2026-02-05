@@ -669,6 +669,19 @@ class ProphetForecaster:
             xgb_60d = self._expand_xgboost_to_daily(xgb_raw, last_date, 60) if xgb_raw else []
             xgb_90d = self._expand_xgboost_to_daily(xgb_raw, last_date, 90) if xgb_raw else []
 
+            logger.info(
+                f"  [{product_name}] Prophet: 30d={len(prophet_30d)} pts, 60d={len(prophet_60d)} pts, 90d={len(prophet_90d)} pts"
+            )
+            logger.info(
+                f"  [{product_name}] XGBoost: 30d={len(xgb_30d)} pts, 60d={len(xgb_60d)} pts, 90d={len(xgb_90d)} pts"
+            )
+            if prophet_90d:
+                prophet_90d_mean = sum(p.predicted_quantity for p in prophet_90d) / len(prophet_90d)
+                logger.info(f"  [{product_name}] Prophet 90d média: {prophet_90d_mean:.1f}")
+            if xgb_90d:
+                xgb_90d_mean = sum(p.get("predicted_quantity", 0) for p in xgb_90d) / len(xgb_90d)
+                logger.info(f"  [{product_name}] XGBoost 90d média: {xgb_90d_mean:.1f}")
+
             prophet_mape = metrics.mape
             xgb_mape = xgb_metrics.get("mape") if xgb_metrics else None
 
@@ -695,6 +708,19 @@ class ProphetForecaster:
                 xgboost_mape=xgb_mape,
                 horizon=90,
                 product_name=product_name,
+            )
+
+            historical_mean = (
+                sum(h.quantity for h in historical) / len(historical) if historical else 0.0
+            )
+            forecast_30d_final = self._validate_forecast_values(
+                forecast_30d_final, xgb_30d, product_name, 30, historical_mean
+            )
+            forecast_60d_final = self._validate_forecast_values(
+                forecast_60d_final, xgb_60d, product_name, 60, historical_mean
+            )
+            forecast_90d_final = self._validate_forecast_values(
+                forecast_90d_final, xgb_90d, product_name, 90, historical_mean
             )
 
             # Usar forecast_final (Model Router) - NUNCA Prophet original
@@ -885,8 +911,27 @@ class ProphetForecaster:
     ) -> List[ForecastDataPoint]:
         """Extrai período específico do forecast"""
         last_historical_date = historical['ds'].max()
-        forecast_period = forecast[forecast['ds'] > last_historical_date].head(days)
-        
+
+        # Garantir que ambos são timezone-naive para comparação
+        if hasattr(last_historical_date, "tzinfo") and last_historical_date.tzinfo is not None:
+            last_historical_date = last_historical_date.replace(tzinfo=None)
+        ds_series = forecast["ds"]
+        if hasattr(ds_series.dt, "tz") and ds_series.dt.tz is not None:
+            forecast = forecast.copy()
+            forecast["ds"] = forecast["ds"].apply(
+                lambda x: x.replace(tzinfo=None) if getattr(x, "tzinfo", None) else x
+            )
+
+        logger.debug(
+            f"  _extract_forecast_period: last_date={last_historical_date} (type={type(last_historical_date).__name__}), "
+            f"forecast ds range={forecast['ds'].min()} to {forecast['ds'].max()}, filtering for {days} days"
+        )
+        future_data = forecast[forecast['ds'] > last_historical_date]
+        logger.debug(
+            f"  _extract_forecast_period: {len(future_data)} linhas futuras encontradas (pedido: {days})"
+        )
+        forecast_period = future_data.head(days)
+
         return [
             ForecastDataPoint(
                 date=row['ds'].isoformat(),
@@ -1202,8 +1247,45 @@ class ProphetForecaster:
             else:
                 return prophet_forecast
         except Exception as e:
-            logger.warning(f"Model Router erro para {product_name} {horizon}d: {e}, fallback Prophet")
+            logger.warning(f"Model Router erro para {product_name} {horizon}d: {e}, fallback seguro")
+            # Fallback: usar o que tiver valores não-zero
+            if xgboost_forecast and any(p.get("predicted_quantity", 0) > 0 for p in xgboost_forecast):
+                return xgboost_forecast
             return prophet_forecast
+
+    def _validate_forecast_values(
+        self,
+        forecast_data: List[Dict],
+        xgb_data: List[Dict],
+        product_name: str,
+        horizon: int,
+        historical_mean: float,
+    ) -> List[Dict]:
+        """Se forecast selecionado tem valores ~0 mas XGBoost tem valores razoáveis, usar XGBoost."""
+        if not forecast_data:
+            return xgb_data if xgb_data else forecast_data
+
+        pred_key = "predicted_quantity"
+        forecast_mean = (
+            sum(p.get(pred_key, 0) for p in forecast_data) / len(forecast_data)
+            if forecast_data
+            else 0
+        )
+
+        if historical_mean > 0 and forecast_mean < historical_mean * 0.01 and xgb_data:
+            xgb_mean = (
+                sum(p.get(pred_key, 0) for p in xgb_data) / len(xgb_data)
+                if xgb_data
+                else 0
+            )
+            if xgb_mean > forecast_mean:
+                logger.warning(
+                    f"  ⚠️ [{product_name}] {horizon}d: forecast ~0 (média={forecast_mean:.1f}), "
+                    f"substituindo por XGBoost (média={xgb_mean:.1f})"
+                )
+                return xgb_data
+
+        return forecast_data
 
     def _xgboost_to_prophet_format(self, xgb_forecast: List[Dict]) -> List[Dict]:
         """
