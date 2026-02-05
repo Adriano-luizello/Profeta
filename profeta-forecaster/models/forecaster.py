@@ -704,6 +704,9 @@ class ProphetForecaster:
             prophet_mape = metrics.mape
             xgb_mape = xgb_metrics.get("mape") if xgb_metrics else None
 
+            # Sinalizar se dados são mensais para _select_best_forecast
+            self._current_df_is_monthly = self._is_historical_monthly(df)
+
             forecast_30d_final = self._select_best_forecast(
                 prophet_forecast=to_dict_list(prophet_30d),
                 xgboost_forecast=xgb_30d,
@@ -741,6 +744,8 @@ class ProphetForecaster:
             forecast_90d_final = self._validate_forecast_values(
                 forecast_90d_final, xgb_90d, product_name, 90, historical_mean
             )
+
+            self._current_df_is_monthly = False
 
             # === CLAMP: limitar previsões diárias antes de agregar ===
             forecast_30d_final = self._clamp_daily_forecasts(forecast_30d_final, df)
@@ -1298,6 +1303,13 @@ class ProphetForecaster:
         Fallback para Prophet se algo falhar.
         """
         try:
+            # Quando histórico é mensal e horizonte > 30d, usar só XGBoost
+            # (Prophet gera diário com poucos dados mensais e explode ao reagregar)
+            if hasattr(self, '_current_df_is_monthly') and self._current_df_is_monthly and horizon in [60, 90]:
+                if xgboost_forecast and any(p.get("predicted_quantity", 0) > 0 for p in xgboost_forecast):
+                    logger.info(f"  [{product_name}] Histórico mensal + horizonte {horizon}d → usando só XGBoost")
+                    return self._xgboost_to_prophet_format(xgboost_forecast) if hasattr(xgboost_forecast[0], 'get') and 'date' not in str(type(xgboost_forecast[0])) else xgboost_forecast
+
             # Se não tem XGBoost, usar Prophet
             if not xgboost_forecast or xgboost_mape is None:
                 if prophet_forecast:
@@ -1378,7 +1390,7 @@ class ProphetForecaster:
         self,
         daily_forecast: List[Dict],
         df: pd.DataFrame,
-        max_multiplier: float = 1.5,
+        max_multiplier: float = 3.0,
     ) -> List[Dict]:
         """
         Limita cada previsão diária a max_multiplier * (máximo diário histórico).
@@ -1428,7 +1440,7 @@ class ProphetForecaster:
         self,
         monthly_forecast: List[Dict],
         df: pd.DataFrame,
-        max_multiplier: float = 1.5,
+        max_multiplier: float = 2.5,
     ) -> List[Dict]:
         """
         Rede de segurança pós-agregação: nenhum mês pode exceder
