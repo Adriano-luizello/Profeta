@@ -71,6 +71,15 @@ export function ForecastChart({
       ? forecast60d
       : forecast90d
 
+  // Debug temporário: valores que chegam no gráfico (remover após validar 60d/90d)
+  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+    console.log('ForecastChart data:', {
+      horizon: selectedHorizon,
+      forecastPoints: forecastData.map((p) => ({ date: p.date, qty: p.predicted_quantity })),
+      historicalSample: recentHistorical.slice(-3).map((p) => ({ date: p.date, qty: p.quantity })),
+    })
+  }
+
   // Preparar labels (datas) — usar histórico recente para o gráfico
   const historicalLabels = recentHistorical.map((d) =>
     format(new Date(d.date), 'dd/MM', { locale: ptBR })
@@ -247,7 +256,11 @@ export function ForecastChart({
 
   return (
     <div className="w-full h-[400px] p-4 bg-white rounded-lg shadow">
-      <Line data={chartData} options={options} />
+      <Line
+        key={selectedHorizon}
+        data={chartData}
+        options={options}
+      />
     </div>
   )
 }

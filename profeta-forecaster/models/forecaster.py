@@ -904,6 +904,17 @@ class ProphetForecaster:
             
             # Calcular métricas
             metrics = self._calculate_metrics(aggregated_df, forecast_result, {"seasonality": "year-round"})
+
+            # Log valores finais por categoria (investigação Vendas Totais 60d/90d)
+            logger.info(
+                f"  [{category}] FINAL category forecast_30d: {[round(p.predicted_quantity, 2) for p in forecast_30d]}"
+            )
+            logger.info(
+                f"  [{category}] FINAL category forecast_60d: {[round(p.predicted_quantity, 2) for p in forecast_60d]}"
+            )
+            logger.info(
+                f"  [{category}] FINAL category forecast_90d: {[round(p.predicted_quantity, 2) for p in forecast_90d]}"
+            )
             
             forecasts.append(CategoryForecast(
                 category=category,

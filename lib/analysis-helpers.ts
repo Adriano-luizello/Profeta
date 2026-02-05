@@ -23,6 +23,49 @@ function sumByDate<T extends { date: string }>(
     .map(([date, quantity]) => ({ date: date + 'T00:00:00.000Z', quantity }))
 }
 
+/**
+ * Indica se a série deve ser agregada a mensal (dados diários/semanais).
+ * Consistente com backend _is_historical_monthly: intervalo médio entre pontos.
+ */
+function shouldAggregateToMonthly(
+  dataPoints: { date: string }[]
+): boolean {
+  if (dataPoints.length < 2) return false
+  const dates = dataPoints
+    .map((p) => new Date(p.date).getTime())
+    .sort((a, b) => a - b)
+  const totalDays = (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24)
+  const avgGap = totalDays / (dates.length - 1)
+  // Intervalo médio < 25 dias → diários/semanais, agregar a mensal
+  // Intervalo médio >= 25 dias → já mensais, não reagregar
+  return avgGap < 25
+}
+
+/**
+ * Agrupa pontos por mês (YYYY-MM) quando são dados diários/semanais,
+ * para alinhar escala com histórico mensal e evitar valores inflados no gráfico.
+ */
+function aggregateToMonthly(
+  points: { date: string; quantity: number }[]
+): { date: string; quantity: number }[] {
+  if (!shouldAggregateToMonthly(points)) return points
+  const byMonth = new Map<string, { sum: number; lastDay: string }>()
+  for (const p of points) {
+    const day = p.date.split('T')[0]
+    const monthKey = day.slice(0, 7)
+    const existing = byMonth.get(monthKey)
+    if (!existing) {
+      byMonth.set(monthKey, { sum: p.quantity, lastDay: day })
+    } else {
+      existing.sum += p.quantity
+      if (day > existing.lastDay) existing.lastDay = day
+    }
+  }
+  return Array.from(byMonth.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, v]) => ({ date: v.lastDay + 'T00:00:00.000Z', quantity: v.sum }))
+}
+
 export function getAggregatedChartData(forecast: ForecastResponse): {
   historical: HistoricalDataPoint[]
   forecast30d: ForecastDataPoint[]
@@ -45,10 +88,11 @@ export function getAggregatedChartData(forecast: ForecastResponse): {
     quantity: x.quantity,
   }))
 
-  const agg30 = sumByDate(
+  const raw30 = sumByDate(
     forecast.product_forecasts.flatMap((pf) => pf.forecast_30d ?? []),
     (x: ForecastDataPoint) => x.predicted_quantity
   )
+  const agg30 = aggregateToMonthly(raw30)
   const forecast30d: ForecastDataPoint[] = agg30.map((x) => ({
     date: x.date,
     predicted_quantity: x.quantity,
@@ -56,10 +100,11 @@ export function getAggregatedChartData(forecast: ForecastResponse): {
     upper_bound: x.quantity * 1.2,
   }))
 
-  const agg60 = sumByDate(
+  const raw60 = sumByDate(
     forecast.product_forecasts.flatMap((pf) => pf.forecast_60d ?? []),
     (x: ForecastDataPoint) => x.predicted_quantity
   )
+  const agg60 = aggregateToMonthly(raw60)
   const forecast60d: ForecastDataPoint[] = agg60.map((x) => ({
     date: x.date,
     predicted_quantity: x.quantity,
@@ -67,10 +112,11 @@ export function getAggregatedChartData(forecast: ForecastResponse): {
     upper_bound: x.quantity * 1.2,
   }))
 
-  const agg90 = sumByDate(
+  const raw90 = sumByDate(
     forecast.product_forecasts.flatMap((pf) => pf.forecast_90d ?? []),
     (x: ForecastDataPoint) => x.predicted_quantity
   )
+  const agg90 = aggregateToMonthly(raw90)
   const forecast90d: ForecastDataPoint[] = agg90.map((x) => ({
     date: x.date,
     predicted_quantity: x.quantity,
