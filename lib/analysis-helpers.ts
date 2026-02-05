@@ -125,7 +125,7 @@ export function getAggregatedChartData(forecast: ForecastResponse): {
   }))
 
   // Debug: inspecionar dados 30d/60d/90d para Vendas Totais (remover após validar)
-  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  if (typeof window !== 'undefined') {
     const avgGap = (pts: { date: string }[]) => {
       if (pts.length < 2) return 0
       const dates = pts.map((p) => new Date(p.date).getTime()).sort((a, b) => a - b)

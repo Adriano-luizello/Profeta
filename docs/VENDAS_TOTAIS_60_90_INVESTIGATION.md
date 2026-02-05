@@ -1,0 +1,186 @@
+# Investigação: Vendas Totais 30d correto (~8–10k), 60d/90d errado (100k–150k)
+
+Documento de investigação apenas. Sem correções.
+
+---
+
+## 1. FRONTEND – `getAggregatedChartData` (lib/analysis-helpers.ts)
+
+### Código completo da função
+
+Arquivo: `lib/analysis-helpers.ts`. A função **não recebe horizonte**. Ela sempre retorna **as três séries** (30d, 60d, 90d) a partir do mesmo `forecast`:
+
+```typescript
+export function getAggregatedChartData(forecast: ForecastResponse): {
+  historical: HistoricalDataPoint[]
+  forecast30d: ForecastDataPoint[]
+  forecast60d: ForecastDataPoint[]
+  forecast90d: ForecastDataPoint[]
+} {
+  if (!forecast.product_forecasts?.length) {
+    return { historical: [], forecast30d: [], forecast60d: [], forecast90d: [] }
+  }
+
+  const allHistorical: { date: string; quantity: number }[] = []
+  for (const pf of forecast.product_forecasts) {
+    for (const h of pf.historical_data ?? []) {
+      allHistorical.push({ date: h.date, quantity: h.quantity })
+    }
+  }
+  const historicalAgg = sumByDate(allHistorical, (x) => x.quantity)
+  const historical: HistoricalDataPoint[] = historicalAgg.map((x) => ({
+    date: x.date,
+    quantity: x.quantity,
+  }))
+
+  const raw30 = sumByDate(
+    forecast.product_forecasts.flatMap((pf) => pf.forecast_30d ?? []),
+    (x: ForecastDataPoint) => x.predicted_quantity
+  )
+  const agg30 = aggregateToMonthly(raw30)
+  const forecast30d: ForecastDataPoint[] = agg30.map((x) => ({
+    date: x.date,
+    predicted_quantity: x.quantity,
+    lower_bound: x.quantity * 0.8,
+    upper_bound: x.quantity * 1.2,
+  }))
+
+  const raw60 = sumByDate(
+    forecast.product_forecasts.flatMap((pf) => pf.forecast_60d ?? []),
+    (x: ForecastDataPoint) => x.predicted_quantity
+  )
+  const agg60 = aggregateToMonthly(raw60)
+  const forecast60d: ForecastDataPoint[] = agg60.map((x) => ({
+    date: x.date,
+    predicted_quantity: x.quantity,
+    lower_bound: x.quantity * 0.8,
+    upper_bound: x.quantity * 1.2,
+  }))
+
+  const raw90 = sumByDate(
+    forecast.product_forecasts.flatMap((pf) => pf.forecast_90d ?? []),
+    (x: ForecastDataPoint) => x.predicted_quantity
+  )
+  const agg90 = aggregateToMonthly(raw90)
+  const forecast90d: ForecastDataPoint[] = agg90.map((x) => ({
+    date: x.date,
+    predicted_quantity: x.quantity,
+    lower_bound: x.quantity * 0.8,
+    upper_bound: x.quantity * 1.2,
+  }))
+
+  // Debug log (ver corpo em analysis-helpers.ts)
+  return { historical, forecast30d, forecast60d, forecast90d }
+}
+```
+
+(As funções auxiliares `sumByDate`, `shouldAggregateToMonthly` e `aggregateToMonthly` estão no mesmo arquivo acima de `getAggregatedChartData`.)
+
+### Como monta "Vendas Totais"
+
+- **Histórico:** concatena `historical_data` de todos os `product_forecasts`, depois **soma por data** com `sumByDate` (um ponto por data com quantidade = soma de todos os produtos).
+- **30d / 60d / 90d:** para cada horizonte:
+  - Concatena `forecast_30d` (ou `forecast_60d` ou `forecast_90d`) de **todos** os produtos.
+  - **Soma por data** com `sumByDate` (um ponto por data com `predicted_quantity` = soma de todos os produtos naquela data).
+  - Se `shouldAggregateToMonthly` for true (intervalo médio entre datas < 25 dias), aplica `aggregateToMonthly` (agrupa por mês YYYY-MM e soma).
+
+### Decisão de horizonte
+
+- **getAggregatedChartData não decide horizonte.** Ela **sempre** calcula e devolve as três séries: `forecast30d`, `forecast60d`, `forecast90d`.
+- Quem escolhe qual série exibir é o **componente do gráfico**, usando `selectedHorizon` (30d / 60d / 90d).
+
+---
+
+## 2. FRONTEND – Quem chama getAggregatedChartData e como usa o horizonte
+
+### Componente que chama: `GeneralTab` (components/dashboard/analysis/GeneralTab.tsx)
+
+Trecho relevante:
+
+```tsx
+// selectedPeriod vem das props (ex.: 30, 60 ou 90 do PeriodSelector no dashboard)
+const selectedPeriod = ... // default 30
+const selectedHorizon = `${selectedPeriod}d` as '30d' | '60d' | '90d'
+
+// chartData contém AS TRÊS séries; não filtra por horizonte aqui
+const chartData =
+  viewMode === 'total' || selectedCategory === 'all'
+    ? getAggregatedChartData(forecast)
+    : getCategoryChartData(forecast, selectedCategory)
+
+// O gráfico recebe as 3 séries e o horizonte; ELE escolhe qual série desenhar
+<ForecastChart
+  historical={chartData.historical}
+  forecast30d={chartData.forecast30d}
+  forecast60d={chartData.forecast60d}
+  forecast90d={chartData.forecast90d}
+  selectedHorizon={selectedHorizon}
+  productName={...}
+/>
+```
+
+### Uso de selectedPeriod / selectedHorizon
+
+- **selectedPeriod** (30 | 60 | 90): vem do `PeriodSelector` no dashboard; o usuário escolhe “30 dias”, “60 dias” ou “90 dias”.
+- **selectedHorizon** = `"30d"` | `"60d"` | `"90d"`: é só o mesmo valor em string para o gráfico.
+- **getAggregatedChartData(forecast)** é chamada **uma vez** e devolve sempre `forecast30d`, `forecast60d`, `forecast90d`. Não há filtro por horizonte nessa função.
+- O **ForecastChart** usa `selectedHorizon` para escolher **qual** das três séries desenhar, por exemplo:
+  - `forecastData = selectedHorizon === '30d' ? forecast30d : selectedHorizon === '60d' ? forecast60d : forecast90d`
+
+Ou seja: os dados de 30d/60d/90d vêm todos do mesmo `forecast`; o horizonte só escolhe qual série exibir no gráfico.
+
+---
+
+## 3. DADOS – O que está em forecast_results.response
+
+- A tabela **forecast_results** guarda, por análise, o JSON completo da resposta do backend em **response** (ver `lib/services/run-forecast.ts`: `persistForecastResult` grava `response` e `getForecastFromDb` lê `response`).
+- Esse `response` é um **ForecastResponse**: tem `product_forecasts[]`, e cada item tem `forecast_30d`, `forecast_60d`, `forecast_90d` (listas de pontos com `date`, `predicted_quantity`, `lower_bound`, `upper_bound`).
+
+### Como inspecionar para um produto (ex.: "Kissen-Inlett Sia")
+
+1. **Pelo Supabase (SQL ou Table Editor)**  
+   - Abrir a tabela `forecast_results`.  
+   - Coluna `response` é JSONB.  
+   - Para uma `analysis_id` usada no dashboard, abrir o `response` e navegar:  
+     `response -> product_forecasts -> [produto com product_name = "Kissen-Inlett Sia"]`.
+
+2. **O que anotar para esse produto**
+   - **forecast_30d:** `length`; primeiro ponto: `date`, `predicted_quantity`; último ponto: idem.
+   - **forecast_60d:** idem.
+   - **forecast_90d:** idem.
+   - **Diário vs mensal:** diferença em dias entre as `date` de dois pontos consecutivos. Se ~1 dia → diário; se ~28–31 dias → mensal.
+
+3. **Exemplo de query SQL (read-only) no Supabase**
+   - Para listar um produto e tamanhos:
+   ```sql
+   select
+     response->'product_forecasts'->0->>'product_name' as product_name,
+     jsonb_array_length(response->'product_forecasts'->0->'forecast_30d') as len_30d,
+     jsonb_array_length(response->'product_forecasts'->0->'forecast_60d') as len_60d,
+     jsonb_array_length(response->'product_forecasts'->0->'forecast_90d') as len_90d
+   from forecast_results
+   where analysis_id = '<sua_analysis_id>';
+   ```
+   - Para primeiro/último valor de 60d do primeiro produto:
+   ```sql
+   select
+     response->'product_forecasts'->0->'forecast_60d'->0->>'predicted_quantity' as first_60d,
+     response->'product_forecasts'->0->'forecast_60d'->-1->>'predicted_quantity' as last_60d
+   from forecast_results
+   where analysis_id = '<sua_analysis_id>';
+   ```
+   (Sintaxe pode variar conforme o Supabase; -1 para último elemento pode não ser suportado em todos os casos.)
+
+Com isso você vê exatamente o tamanho e os valores de forecast_30d/60d/90d por produto e se os pontos são diários ou mensais.
+
+---
+
+## 4. BACKEND – Log temporário antes de retornar a resposta
+
+Adicionado em **profeta-forecaster/models/forecaster.py**, logo antes de `return response`, um log dos primeiros 2 produtos com tamanho e primeiro/último valor de forecast_30d, forecast_60d e forecast_90d (ver alteração no arquivo).
+
+---
+
+## 5. FRONTEND – Log em produção
+
+O log `[getAggregatedChartData] Vendas Totais` foi alterado para rodar sempre no browser (removida a condição `process.env.NODE_ENV === 'development'`), mantendo apenas `typeof window !== 'undefined'`, para poder ver os valores reais também em produção.

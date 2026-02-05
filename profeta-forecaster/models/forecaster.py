@@ -445,6 +445,23 @@ class ProphetForecaster:
         
         # Salvar no banco
         await self._save_forecast(response)
+
+        # Log dos valores finais por produto para debug (remover após investigação)
+        if response.product_forecasts:
+            for pf in response.product_forecasts[:2]:
+                logger.info(f"RESPONSE DEBUG [{pf.product_name}]:")
+                f30 = pf.forecast_30d or []
+                f60 = pf.forecast_60d or []
+                f90 = pf.forecast_90d or []
+                logger.info(
+                    f"  forecast_30d: {len(f30)} pts, first={f30[0].predicted_quantity if f30 else 'EMPTY'}, last={f30[-1].predicted_quantity if f30 else 'EMPTY'}"
+                )
+                logger.info(
+                    f"  forecast_60d: {len(f60)} pts, first={f60[0].predicted_quantity if f60 else 'EMPTY'}, last={f60[-1].predicted_quantity if f60 else 'EMPTY'}"
+                )
+                logger.info(
+                    f"  forecast_90d: {len(f90)} pts, first={f90[0].predicted_quantity if f90 else 'EMPTY'}, last={f90[-1].predicted_quantity if f90 else 'EMPTY'}"
+                )
         
         return response
     
