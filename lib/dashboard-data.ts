@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { getSupplyChainMetrics } from '@/lib/supply-chain'
 
 export interface SalesPoint {
   date: string
@@ -223,6 +224,9 @@ export interface DashboardKpis {
 /**
  * KPIs para dashboard: produtos em risco (recomendação de reposição) e stockouts evitados.
  * Usa a análise mais recente para evitar queries muito grandes.
+ * 
+ * RETROCOMPATIBILIDADE: Tenta usar novas métricas de supply chain (com avg_daily_demand).
+ * Se avg_daily_demand não estiver disponível, faz fallback para recommendations antigas.
  */
 export async function getDashboardKpis(
   supabase: SupabaseClient,
@@ -240,6 +244,103 @@ export async function getDashboardKpis(
 
   const analysisId = await getLatestAnalysis(supabase, userId)
   if (!analysisId) return empty
+  
+  // Tentar usar novas métricas de supply chain
+  try {
+    const supplyChainMetrics = await getSupplyChainMetrics(supabase, userId)
+    
+    // Se temos métricas válidas (com avg_daily_demand), usar o novo sistema
+    const hasValidMetrics = supplyChainMetrics.some(m => m.avg_daily_demand !== null)
+    
+    if (hasValidMetrics && supplyChainMetrics.length > 0) {
+      // Filtrar produtos com urgência != 'ok' (em risco)
+      const atRisk = supplyChainMetrics.filter(m => m.urgency_level !== 'ok')
+      
+      // Mapear para ProdutoEmRisco (compatibilidade com componentes existentes)
+      const produtosEmRiscoList: ProdutoEmRisco[] = atRisk.map(m => ({
+        product_id: m.product_id,
+        product_name: m.product_name,
+        reasoning: m.urgency_reason,
+        recommended_quantity: m.recommended_order_qty,
+        analysis_id: m.analysis_id,
+        risk_level: m.urgency_level === 'critical' ? 'high' : m.urgency_level === 'attention' ? 'medium' : 'low',
+        urgency: m.urgency_level as ProdutoEmRisco['urgency'],
+        supplier_name: m.supplier_name,
+        supplier_lead_time_days: m.lead_time_days,
+        supplier_moq: m.moq,
+        current_stock: m.current_stock,
+        recommendation_id: `sc-${m.product_id}` // ID sintético para compatibilidade
+      }))
+      
+      // Alertas (critical e attention apenas)
+      const alertas: AlertaReordenamento[] = atRisk
+        .filter(m => m.urgency_level === 'critical' || m.urgency_level === 'attention')
+        .map(m => ({
+          product_id: m.product_id,
+          product_name: m.product_name,
+          analysis_id: m.analysis_id,
+          recommended_quantity: m.recommended_order_qty ?? m.moq,
+          moq: m.moq,
+          leadTime: m.lead_time_days,
+          dateLabel: m.urgency_level === 'critical' ? 'HOJE' : '3 dias',
+          priority: m.urgency_level === 'critical' ? 'high' : 'medium',
+          recommendation_id: `sc-${m.product_id}`
+        }))
+      
+      // Buscar defaults e stockouts evitados (mesma lógica)
+      const { data: profetaUser } = await supabase
+        .from('profeta_users')
+        .select('organization_id')
+        .eq('id', userId)
+        .maybeSingle()
+      
+      let defaultLeadTimeDays: number | null = null
+      let defaultMoq: number | null = null
+      
+      if (profetaUser?.organization_id) {
+        const { data: settings } = await supabase
+          .from('settings')
+          .select('default_lead_time_days, default_moq')
+          .eq('organization_id', profetaUser.organization_id)
+          .maybeSingle()
+        if (settings) {
+          defaultLeadTimeDays = settings.default_lead_time_days ?? null
+          defaultMoq = settings.default_moq ?? null
+        }
+      }
+      
+      const since = new Date()
+      since.setDate(since.getDate() - 90)
+      const sinceStr = since.toISOString().slice(0, 10)
+      const { data: actionsData } = await supabase
+        .from('alert_actions')
+        .select('recommendation_id, created_at')
+        .eq('user_id', userId)
+      const actions = actionsData ?? []
+      
+      let stockoutsEvitados = 0
+      const markedSet = new Set<string>()
+      for (const a of actions) {
+        markedSet.add(String(a.recommendation_id))
+        const d = String(a.created_at).slice(0, 10)
+        if (d >= sinceStr) stockoutsEvitados += 1
+      }
+      
+      return {
+        produtosEmRisco: atRisk.length,
+        stockoutsEvitados,
+        produtosEmRiscoList,
+        defaultLeadTimeDays,
+        defaultMoq,
+        alertas,
+        markedRecommendationIds: Array.from(markedSet)
+      }
+    }
+  } catch (error) {
+    console.error('[dashboard] Erro ao usar supply chain metrics, usando fallback:', error)
+  }
+  
+  // FALLBACK: Sistema antigo com recommendations
 
   const { data: profetaUser } = await supabase
     .from('profeta_users')

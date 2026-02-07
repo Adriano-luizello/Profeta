@@ -443,6 +443,11 @@ class ProphetForecaster:
             "generated_at": datetime.now().isoformat()
         }
         
+        # Calcular e persistir avg_daily_demand por produto
+        if response.product_forecasts:
+            logger.info("📊 Calculando avg_daily_demand por produto...")
+            self._calculate_and_persist_avg_daily_demand(response.product_forecasts, sales_df)
+        
         # Salvar no banco
         await self._save_forecast(response)
 
@@ -1106,6 +1111,96 @@ class ProphetForecaster:
             accuracy_level=accuracy_level_val,
             sample_size=sample_size_val,
         )
+    
+    def _calculate_and_persist_avg_daily_demand(
+        self,
+        product_forecasts: List[ProductForecast],
+        sales_df: pd.DataFrame
+    ):
+        """
+        Calcula avg_daily_demand a partir dos forecasts gerados e persiste no Supabase.
+        
+        Args:
+            product_forecasts: Lista de forecasts por produto
+            sales_df: DataFrame com histórico de vendas (para determinar se é mensal/diário)
+        """
+        updates = []
+        
+        for pf in product_forecasts:
+            try:
+                # Usar forecast_90d para calcular avg_daily_demand (horizonte mais longo)
+                forecast_data = pf.forecast_90d or pf.forecast_60d or pf.forecast_30d
+                
+                if not forecast_data:
+                    logger.warning(f"⚠️  Sem dados de forecast para {pf.product_name}, pulando avg_daily_demand")
+                    continue
+                
+                # Converter para DataFrame
+                forecast_df = pd.DataFrame([
+                    {"date": fp.date, "predicted_quantity": fp.predicted_quantity}
+                    for fp in forecast_data
+                ])
+                
+                if forecast_df.empty:
+                    continue
+                
+                # Determinar se o forecast é diário ou mensal pela frequência das datas
+                forecast_df['date'] = pd.to_datetime(forecast_df['date'])
+                forecast_df = forecast_df.sort_values('date')
+                
+                dates = forecast_df['date']
+                if len(dates) > 1:
+                    avg_gap = (dates.iloc[-1] - dates.iloc[0]).days / max(len(dates) - 1, 1)
+                    is_monthly = avg_gap > 15  # gap médio > 15 dias = mensal
+                else:
+                    is_monthly = False
+                
+                total_predicted = forecast_df['predicted_quantity'].sum()
+                
+                if is_monthly:
+                    # Para forecast mensal: total previsto / dias no período
+                    total_days = (dates.iloc[-1] - dates.iloc[0]).days + 30  # +30 para incluir último mês
+                    avg_daily = total_predicted / max(total_days, 1)
+                else:
+                    # Para forecast diário: total previsto / número de dias
+                    total_days = (dates.iloc[-1] - dates.iloc[0]).days + 1
+                    avg_daily = total_predicted / max(total_days, 1)
+                
+                # Garantir que não seja negativo
+                avg_daily = max(avg_daily, 0)
+                
+                # Arredondar para 4 casas decimais
+                avg_daily = round(float(avg_daily), 4)
+                
+                updates.append({
+                    "id": pf.product_id,
+                    "avg_daily_demand": avg_daily
+                })
+                
+                logger.info(f"  {pf.product_name}: avg_daily_demand = {avg_daily:.4f} un/dia")
+                
+            except Exception as e:
+                logger.error(f"❌ Erro ao calcular avg_daily_demand para {pf.product_name}: {e}")
+                continue
+        
+        # Persistir no Supabase (batch update)
+        if updates:
+            try:
+                logger.info(f"💾 Persistindo avg_daily_demand para {len(updates)} produtos...")
+                
+                for update in updates:
+                    self.supabase.table("products").update({
+                        "avg_daily_demand": update["avg_daily_demand"]
+                    }).eq("id", update["id"]).execute()
+                
+                logger.info(f"✅ avg_daily_demand persistido: {len(updates)} produtos")
+                
+            except Exception as e:
+                logger.error(f"❌ Erro ao persistir avg_daily_demand: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        else:
+            logger.warning("⚠️ Nenhum avg_daily_demand calculado")
     
     def _generate_recommendations(
         self,

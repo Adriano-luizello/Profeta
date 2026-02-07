@@ -9,6 +9,7 @@ import {
   getForecastsByDate,
   getDashboardKpis
 } from '@/lib/dashboard-data'
+import { getSupplyChainMetrics } from '@/lib/supply-chain'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 
@@ -87,19 +88,44 @@ async function lineChart(
 
 /**
  * Gera dados para tabela "supply chain" (produtos em risco).
+ * Usa as novas métricas de supply chain com ROP, urgência, e MOQ.
  */
 async function supplyChainTable(
   supabase: SupabaseClient,
-  userId: string
+  userId: string,
+  urgencyFilter?: string
 ): Promise<ChartOutput> {
-  const kpis = await getDashboardKpis(supabase, userId)
-  const rows = kpis.produtosEmRiscoList.map((p) => ({
-    produto: p.product_name,
-    estoque: p.current_stock != null ? String(p.current_stock) : '—',
-    recomendação: p.recommended_quantity != null ? `Pedir ${p.recommended_quantity} un` : 'Ver análise',
-    risco: p.risk_level === 'high' ? 'Alto' : p.risk_level === 'medium' ? 'Médio' : 'Baixo'
+  const metrics = await getSupplyChainMetrics(supabase, userId)
+  
+  // Filtrar por urgência se solicitado
+  const filtered = urgencyFilter && urgencyFilter !== 'all'
+    ? metrics.filter(m => m.urgency_level === urgencyFilter)
+    : metrics
+  
+  const rows = filtered.map(m => ({
+    produto: m.product_name,
+    estoque_atual: m.current_stock != null ? String(m.current_stock) : '—',
+    dias_ate_ruptura: m.days_until_stockout != null ? `${m.days_until_stockout} dias` : '—',
+    data_ruptura: m.stockout_date ?? '—',
+    reorder_point: m.reorder_point != null ? String(m.reorder_point) : '—',
+    urgencia: formatUrgency(m.urgency_level),
+    motivo: m.urgency_reason,
+    quantidade_sugerida: m.recommended_order_qty != null ? `${m.recommended_order_qty} un` : '—',
+    moq_alerta: m.moq_alert ?? '—',
+    fornecedor: m.supplier_name ?? '—',
+    lead_time: `${m.lead_time_days} dias`
   }))
+  
   return { chartType: 'table', chartData: rows }
+}
+
+function formatUrgency(level: string): string {
+  switch(level) {
+    case 'critical': return '🔴 Crítico'
+    case 'attention': return '🟡 Atenção'
+    case 'informative': return '🔵 Informativo'
+    default: return '🟢 OK'
+  }
 }
 
 /**
@@ -122,7 +148,7 @@ async function alertasTable(
 export type ChartQuery =
   | { type: 'forecast'; days?: number }
   | { type: 'line'; days?: number }
-  | { type: 'supply_chain' }
+  | { type: 'supply_chain'; urgency_filter?: string }
   | { type: 'alertas' }
 
 /**
@@ -140,7 +166,7 @@ export async function generateChartData(
     case 'line':
       return lineChart(supabase, userId, days)
     case 'supply_chain':
-      return supplyChainTable(supabase, userId)
+      return supplyChainTable(supabase, userId, query.urgency_filter)
     case 'alertas':
       return alertasTable(supabase, userId)
     default:
