@@ -1,7 +1,124 @@
 # 📍 Where We Left Off - Profeta MVP
 
-**Last Session Date**: 2026-02-04  
-**Status**: Código limpo, dashboard único, UI ok, build passando. **Pronto para deploy no Vercel.**
+**Last Session Date**: 2026-02-07  
+**Status**: Supply Chain Intelligence implementado (Reorder Point + MOQ). Sistema híbrido Python+TypeScript calcula métricas em tempo real.
+
+---
+
+## 🧭 Sessão 2026-02-07 — Supply Chain Intelligence (Reorder Point + MOQ)
+
+### O que foi feito
+
+1. **Arquitetura Híbrida Python + TypeScript**
+   - **Python (pipeline time)**: Calcula e persiste `avg_daily_demand` por produto após gerar forecasts.
+   - **TypeScript (request time)**: Calcula ROP, dias até ruptura, urgência, MOQ alerts em tempo real.
+
+2. **Migration 017**: `supply_chain_fields.sql`
+   - `products.avg_daily_demand` DECIMAL(10,4) — demanda diária média calculada pelo Python
+   - `products.safety_stock_days` INTEGER DEFAULT 7 — dias de estoque de segurança desejados
+
+3. **Python: `profeta-forecaster/models/forecaster.py`**
+   - Nova função `_calculate_and_persist_avg_daily_demand()` (linha ~1115)
+   - Calcula avg_daily_demand a partir do forecast_90d (ou 60d/30d como fallback)
+   - Lógica: se forecast é mensal → `total / dias_no_período`, se diário → `total / número_de_dias`
+   - Persiste no Supabase com batch update após gerar todos os forecasts
+   - Chamada adicionada no `generate_forecast()` (linha ~449)
+
+4. **TypeScript: `lib/supply-chain.ts`** (novo arquivo)
+   - `getSupplyChainMetrics()` — função principal que calcula métricas em tempo real
+   - **Métricas calculadas:**
+     - `safety_stock_units = avg_daily_demand × safety_stock_days`
+     - `reorder_point = (avg_daily_demand × lead_time) + safety_stock_units`
+     - `days_until_stockout = current_stock / avg_daily_demand`
+     - `stockout_date = hoje + days_until_stockout`
+     - `urgency_level`: critical | attention | informative | ok
+     - `recommended_order_qty = max(consumo_90d - estoque, moq)`
+   - **Lógica de urgência:**
+     - 🔴 **Critical**: estoque = 0 OU `days_until_stockout < lead_time` (ruptura inevitável)
+     - 🟡 **Attention**: `lead_time ≤ days < lead_time + 7` (janela de pedido fechando)
+     - 🔵 **Informative**: `lead_time + 7 ≤ days < lead_time + 14` (monitorar)
+     - 🟢 **OK**: `days ≥ lead_time + 14` (confortável)
+   - **MOQ Alerts:**
+     - Detecta quando MOQ > necessidade real
+     - Calcula quantos meses de estoque o MOQ representa
+     - Sugere negociar MOQ menor ou aceitar excesso
+
+5. **Chart Data Generator** (`lib/analytics/chart-data-generator.ts`)
+   - `supplyChainTable()` atualizada para usar `getSupplyChainMetrics()`
+   - Adiciona filtro `urgency_filter` (all | critical | attention)
+   - **Tabela expandida com:**
+     - Estoque atual, dias até ruptura, data de ruptura
+     - Reorder point, urgência (com emoji), motivo
+     - Quantidade sugerida, alerta de MOQ, fornecedor, lead time
+
+6. **Tool do AI Assistant** (`lib/ai/tool-definitions.ts`)
+   - `get_supply_chain_analysis` expandida com descrição completa
+   - Novo parâmetro `urgency_filter` para filtrar por urgência
+   - Usuário pode perguntar: "Produtos críticos" → filtra apenas critical
+
+7. **Dashboard KPIs** (`lib/dashboard-data.ts`)
+   - `getDashboardKpis()` atualizada com **retrocompatibilidade**
+   - **Tenta** usar novas métricas de supply chain (se `avg_daily_demand` disponível)
+   - **Fallback** para sistema antigo (recommendations) se pipeline não rodou ainda
+   - Mapeia `SupplyChainMetrics` → `ProdutoEmRisco` e `AlertaReordenamento` (compatibilidade com UI)
+
+8. **Documentação**
+   - Criado `docs/SUPPLY_CHAIN_INTELLIGENCE.md` com documentação completa
+   - Inclui: arquitetura, lógica de urgência, MOQ alerts, como testar, próximos passos
+
+### Commits
+- `feat: implement supply chain intelligence (reorder point + moq)` — implementação completa do sistema híbrido
+
+### Estado atual
+
+- **Migration 017** pronta para aplicar no Supabase
+- **Python** calcula e persiste `avg_daily_demand` após forecast
+- **TypeScript** calcula ROP, urgência, MOQ alerts em tempo real
+- **Dashboard** usa novas métricas quando disponíveis, fallback para recommendations
+- **Chat** retorna tabela expandida com todas as métricas de supply chain
+- **Retrocompatibilidade** garantida: funciona mesmo se pipeline não rodou com nova versão
+
+### Para fazer (próxima sessão)
+
+1. **Testar implementação:**
+   - Aplicar migration 017 no Supabase
+   - Rodar pipeline de forecast com dados reais
+   - Verificar que `avg_daily_demand` é calculado e persistido
+   - Abrir dashboard e verificar alertas com novas métricas
+   - Testar chat: "Quais produtos estão em risco?" → deve retornar tabela expandida
+
+2. **Ajustes se necessário:**
+   - Se avg_daily_demand estiver inflado/deflacionado, ajustar cálculo no Python
+   - Se urgência não faz sentido, ajustar thresholds no TypeScript
+   - Se MOQ alerts forem muito frequentes, ajustar lógica
+
+3. **Próximos itens do roadmap:**
+   - Deploy no Vercel (código pronto)
+   - UI melhorias (chat à direita, menu expandível)
+   - Categorias com lógica XGBoost para 60d/90d (igual produtos)
+
+---
+
+## 🧭 Sessão 2026-02-05 — Forecast 60d/90d e anotações de UI
+
+### O que foi feito
+
+1. **Vendas totais 60d/90d infladas**
+   - Causa: Prophet gera previsões **diárias** a partir de histórico **mensal** (poucos pontos); ao agregar em mensal, valores explodiam.
+   - **Solução:** Em `profeta-forecaster/models/forecaster.py`, quando histórico é mensal e horizonte é 60 ou 90, usar **só XGBoost** (que já prevê mensal). Flag `_current_df_is_monthly` em `_forecast_by_product`; em `_select_best_forecast`, early return com XGBoost nesses casos.
+   - **Rede de segurança:** Métodos `_clamp_daily_forecasts` e `_clamp_monthly_forecasts` mantidos (defaults 3x diário, 2.5x mensal) para casos extremos.
+   - Detalhes: `docs/VENDAS_TOTAIS_60_90_INVESTIGATION.md`.
+
+2. **Commits**
+   - `fix: clamp daily/monthly forecasts...` — clamps iniciais
+   - `fix: reduce clamp multipliers to 1.5x...` — depois revertidos para 3x/2.5x
+   - `fix: use XGBoost-only for 60d/90d when historical data is monthly` — causa raiz
+
+### Para fazer depois (anotado)
+
+1. **Categorias ainda usam Prophet** — O fluxo por **categoria** (`_forecast_by_category`) não aplica a lógica “histórico mensal + 60d/90d → só XGBoost”. Replicar a mesma ideia quando priorizar.
+2. **Chat Analytics** — Mover para a **direita** (depois do `main`) em `app/dashboard/layout.tsx` e garantir que possa ser **minimizado** (estado já existe em `ChatSidebar`; ajustar ordem no flex e largura quando minimizado).
+3. **Menu de navegação** — Tornar **expandível** (colapsado = só ícones, expandido = ícones + texto). Sidebar em `app/dashboard/layout.tsx`; pode usar padrão de `design/figma-profeta/src/components/ui/sidebar.tsx` ou estado + `localStorage` para preferência.
 
 ---
 
@@ -138,4 +255,4 @@ npm run dev
 
 ---
 
-**Última atualização:** 2026-02-04. Pausa por hora; próxima sessão: deploy no Vercel ou testes adicionais. 🚀
+**Última atualização:** 2026-02-05. Forecast 60d/90d corrigido; próximos: deploy Vercel, ou UI (chat à direita, menu expandível, categorias XGBoost). 🚀
