@@ -107,13 +107,9 @@ export async function POST(request: Request) {
       { role: 'user', content: msgTrimmed },
     ]
 
-    // Truncar se muito grande: manter system messages + últimas N mensagens
+    // Truncar se muito grande: manter últimas N mensagens
     if (messages.length > MAX_MESSAGES_IN_CONTEXT) {
-      const systemMessages = messages.filter((m) => m.role === 'system')
-      const nonSystemMessages = messages
-        .filter((m) => m.role !== 'system')
-        .slice(-MAX_MESSAGES_IN_CONTEXT)
-      messages = [...systemMessages, ...nonSystemMessages]
+      messages = messages.slice(-MAX_MESSAGES_IN_CONTEXT)
     }
 
     let response = await anthropic.messages.create({
