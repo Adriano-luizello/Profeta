@@ -63,6 +63,39 @@ export function ChatSidebar() {
           conversationHistory,
         }),
       })
+
+      // Tratamento específico para mensagem muito longa (413)
+      if (res.status === 413) {
+        const data = await res.json()
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `e-${Date.now()}`,
+            type: 'assistant',
+            content: `📏 **Mensagem muito longa**\n\n${data.message || 'Sua mensagem excede o limite de caracteres. Por favor, resuma sua pergunta.'}`,
+          },
+        ])
+        return
+      }
+
+      // Tratamento específico para rate limit (429)
+      if (res.status === 429) {
+        const data = await res.json()
+        const retryAfter = res.headers.get('Retry-After')
+        const waitMessage = retryAfter
+          ? ` Tente novamente em ${retryAfter} segundos.`
+          : ''
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `e-${Date.now()}`,
+            type: 'assistant',
+            content: `⏱️ **Limite de uso atingido**\n\n${data.message || 'Você atingiu o limite de mensagens.'}${waitMessage}`,
+          },
+        ])
+        return
+      }
+
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao processar')
 

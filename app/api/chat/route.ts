@@ -8,10 +8,15 @@ import {
 } from '@/lib/analytics/chart-data-generator'
 import { CLAUDE_CONFIG, SYSTEM_PROMPT } from '@/lib/ai/claude-config'
 import { TOOL_DEFINITIONS } from '@/lib/ai/tool-definitions'
+import { checkRateLimit, recordTokenUsage } from '@/lib/rate-limit'
 
 const anthropic = new Anthropic({
   apiKey: CLAUDE_CONFIG.apiKey,
 })
+
+// Constantes de rate limiting e validação
+const MAX_MESSAGE_LENGTH = 2000 // caracteres por mensagem
+const MAX_MESSAGES_IN_CONTEXT = 50 // mensagens no histórico enviado
 
 function toolToChartQuery(toolName: string, toolInput: unknown): ChartQuery | null {
   const input = toolInput as { days?: number } | null | undefined
@@ -62,10 +67,54 @@ export async function POST(request: Request) {
       )
     }
 
-    const messages: Anthropic.MessageParam[] = [
+    // ===== VALIDAÇÃO: TAMANHO DA MENSAGEM =====
+    if (msgTrimmed.length > MAX_MESSAGE_LENGTH) {
+      return new Response(
+        JSON.stringify({
+          error: 'Mensagem muito longa',
+          message: `Sua mensagem tem ${msgTrimmed.length} caracteres. O limite é ${MAX_MESSAGE_LENGTH}. Por favor, resuma sua pergunta.`,
+        }),
+        {
+          status: 413,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    // ===== RATE LIMIT CHECK =====
+    const rateLimitResult = await checkRateLimit(user.id)
+    if (!rateLimitResult.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: 'rate_limit',
+          message: rateLimitResult.reason,
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(rateLimitResult.retryAfterSeconds
+              ? { 'Retry-After': String(rateLimitResult.retryAfterSeconds) }
+              : {}),
+          },
+        }
+      )
+    }
+
+    // ===== TRUNCAMENTO DE HISTÓRICO =====
+    let messages: Anthropic.MessageParam[] = [
       ...conversationHistory,
       { role: 'user', content: msgTrimmed },
     ]
+
+    // Truncar se muito grande: manter system messages + últimas N mensagens
+    if (messages.length > MAX_MESSAGES_IN_CONTEXT) {
+      const systemMessages = messages.filter((m) => m.role === 'system')
+      const nonSystemMessages = messages
+        .filter((m) => m.role !== 'system')
+        .slice(-MAX_MESSAGES_IN_CONTEXT)
+      messages = [...systemMessages, ...nonSystemMessages]
+    }
 
     let response = await anthropic.messages.create({
       model: CLAUDE_CONFIG.model,
@@ -132,6 +181,17 @@ export async function POST(request: Request) {
     const finalText =
       textBlock?.text ||
       'Desculpe, não consegui processar sua solicitação.'
+
+    // ===== REGISTRAR TOKENS USADOS =====
+    const tokensUsed = response.usage
+      ? response.usage.input_tokens + response.usage.output_tokens
+      : 0
+    if (tokensUsed > 0) {
+      // Fire and forget - não bloquear resposta ao usuário
+      recordTokenUsage(user.id, tokensUsed).catch((e) =>
+        console.error('[Chat API] Failed to record token usage:', e)
+      )
+    }
 
     const apiResponse: {
       content: string
