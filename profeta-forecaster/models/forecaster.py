@@ -180,6 +180,22 @@ class ProphetForecaster:
             logger.info(f"Período: {all_ds.min()} a {all_ds.max()}")
         logger.info(f"Usando dados sintéticos: {use_synthetic}")
         logger.info("=" * 60)
+        
+        # ============================================
+        # DECISÃO: USAR PROPHET OU APENAS XGBOOST?
+        # ============================================
+        # Avaliar qualidade dos dados para decidir se roda Prophet
+        sample_df = list(historical_data.values())[0] if historical_data else pd.DataFrame()
+        prophet_decision = self._should_use_prophet(sample_df)
+        
+        logger.info("=" * 60)
+        logger.info("[Prophet Toggle] Avaliando dados...")
+        logger.info(f"[Prophet Toggle] {prophet_decision['reason']}")
+        if prophet_decision['use_prophet']:
+            logger.info(f"[Prophet Toggle] ✅ Prophet ATIVADO ({prophet_decision['data_points']} pontos {prophet_decision['data_frequency']})")
+        else:
+            logger.info(f"[Prophet Toggle] ⏭️ Prophet DESATIVADO — apenas XGBoost será usado")
+        logger.info("=" * 60)
 
         # ============================================
         # FASE 2: Feature Engineering
@@ -438,24 +454,50 @@ class ProphetForecaster:
         
         # ===== TIMING: PROPHET START =====
         prophet_start = time.time()
+        prophet_product_sec = 0
+        prophet_category_sec = 0
         
-        # Forecast por produto
-        if by_product:
+        # Forecast por produto (condicional baseado na decisão)
+        if by_product and prophet_decision['use_prophet']:
             logger.info("🔮 Gerando forecast por produto (Prophet)...")
+            prophet_product_start = time.time()
             response.product_forecasts = self._forecast_by_product(
                 products,
                 historical_data,
                 forecast_days,
             )
+            prophet_product_sec = time.time() - prophet_product_start
+        elif by_product:
+            logger.info(f"⏭️ Prophet PULADO para produtos — {prophet_decision['reason']}")
+            # Gerar forecast APENAS com XGBoost (sem rodar Prophet)
+            response.product_forecasts = self._forecast_by_product_xgboost_only(
+                products,
+                historical_data,
+                forecast_days,
+            )
         
-        # Forecast por categoria
-        if by_category:
+        # Forecast por categoria (condicional baseado na decisão)
+        xgb_category_sec = 0
+        if by_category and prophet_decision['use_prophet']:
             logger.info("🔮 Gerando forecast por categoria (Prophet)...")
+            prophet_category_start = time.time()
             response.category_forecasts = self._forecast_by_category(
                 products,
                 historical_data,
                 forecast_days
             )
+            prophet_category_sec = time.time() - prophet_category_start
+        elif by_category:
+            logger.info(f"⏭️ Prophet PULADO para categorias — {prophet_decision['reason']}")
+            logger.info("🏷️ Gerando categorias via XGBoost agregado (Prophet desativado)...")
+            xgb_category_start = time.time()
+            # Agregar forecasts dos produtos por categoria
+            response.category_forecasts = self._forecast_by_category_xgboost_only(
+                response.product_forecasts,
+                products,
+                historical_data
+            )
+            xgb_category_sec = time.time() - xgb_category_start
         
         # ===== TIMING: PROPHET END =====
         prophet_sec = time.time() - prophet_start
@@ -474,8 +516,20 @@ class ProphetForecaster:
         # Log final com breakdown de tempo
         logger.info("=" * 60)
         logger.info("[Forecast] TIMING SUMMARY")
-        logger.info(f"[Forecast] Total: {forecast_total_sec:.1f}s | FE: {fe_sec:.1f}s | XGB: {xgb_sec:.1f}s | Prophet: {prophet_sec:.1f}s")
-        logger.info(f"[Forecast] {len(products)} produtos | Prophet/produto: {prophet_sec/len(products):.2f}s")
+        
+        if prophet_decision['use_prophet']:
+            logger.info(f"[Forecast] Total: {forecast_total_sec:.1f}s | FE: {fe_sec:.1f}s | XGB: {xgb_sec:.1f}s | Prophet: {prophet_sec:.1f}s")
+            if prophet_product_sec > 0:
+                logger.info(f"[Forecast] Prophet produtos: {prophet_product_sec:.1f}s | {len(products)} produtos | {prophet_product_sec/max(1, len(products)):.2f}s/produto")
+            if prophet_category_sec > 0:
+                logger.info(f"[Forecast] Prophet categorias (PARALELO): {prophet_category_sec:.1f}s")
+        else:
+            logger.info(f"[Forecast] Total: {forecast_total_sec:.1f}s | FE: {fe_sec:.1f}s | XGB: {xgb_sec:.1f}s | XGB Cat: {xgb_category_sec:.1f}s | Prophet: DESATIVADO")
+            logger.info(f"[Forecast] Motivo: {prophet_decision['reason']}")
+            logger.info(f"[Forecast] {len(products)} produtos processados apenas com XGBoost")
+            if xgb_category_sec > 0:
+                logger.info(f"[Forecast] Categorias XGBoost agregadas: {xgb_category_sec:.1f}s | {len(response.category_forecasts or [])} categorias")
+        
         logger.info("=" * 60)
         
         # Calcular e persistir avg_daily_demand por produto
@@ -597,6 +651,100 @@ class ProphetForecaster:
             # Year-round: sazonalidade fraca
             return np.sin(2 * np.pi * t / 365) * 0.2
     
+    def _forecast_by_product_xgboost_only(
+        self,
+        products: List[Dict],
+        historical_data: Dict[str, pd.DataFrame],
+        forecast_days: List[int],
+    ) -> List[ProductForecast]:
+        """
+        Gera forecast usando APENAS XGBoost (quando Prophet está desativado).
+        Muito mais rápido que Prophet para dados mensais.
+        """
+        logger.info("🤖 Gerando forecast por produto (XGBoost ONLY - sem Prophet)...")
+        forecasts = []
+        
+        for product in products:
+            product_id = product["id"]
+            if product_id not in historical_data:
+                logger.warning(
+                    f"⚠️  Pulando {product.get('cleaned_name', product['original_name'])}: sem dados históricos"
+                )
+                continue
+            
+            df = historical_data[product_id]
+            if len(df) < self.MIN_POINTS:
+                logger.warning(
+                    f"⚠️  Pulando {product.get('cleaned_name', product['original_name'])}: poucos dados ({len(df)} pontos)"
+                )
+                continue
+            
+            product_name = product.get("cleaned_name", product["original_name"])
+            category = product.get("refined_category", "Sem Categoria")
+            
+            # Dados históricos
+            historical = [
+                HistoricalDataPoint(
+                    date=row["ds"].isoformat(),
+                    quantity=float(row["y"]),
+                )
+                for _, row in df.tail(30).iterrows()
+            ]
+            
+            # Buscar XGBoost forecasts
+            product_id_str = str(product_id)
+            xgb_raw = self._fetch_xgboost_forecasts(product_id_str)
+            xgb_metrics = self._fetch_xgboost_metrics(product_id_str)
+            
+            if not xgb_raw:
+                logger.warning(f"  ⚠️ [{product_name}] sem dados XGBoost — pulando")
+                continue
+            
+            last_date = df["ds"].max()
+            
+            # Expandir XGBoost para horizontes
+            xgb_30d = self._expand_xgboost_to_daily(xgb_raw, last_date, 30)
+            xgb_60d = self._expand_xgboost_to_daily(xgb_raw, last_date, 60)
+            xgb_90d = self._expand_xgboost_to_daily(xgb_raw, last_date, 90)
+            
+            # Converter para ForecastDataPoint
+            forecast_30d = [ForecastDataPoint(**d) for d in xgb_30d]
+            forecast_60d = [ForecastDataPoint(**d) for d in xgb_60d]
+            forecast_90d = [ForecastDataPoint(**d) for d in xgb_90d]
+            
+            # Métricas do XGBoost
+            metrics = ForecastMetrics(
+                mape=xgb_metrics.get("mape", 0.0) if xgb_metrics else 0.0,
+                rmse=xgb_metrics.get("rmse", 0.0) if xgb_metrics else 0.0,
+                mae=xgb_metrics.get("mae", 0.0) if xgb_metrics else 0.0,
+                trend="stable",
+                seasonality_strength=0.0,
+                model_used="xgboost"
+            )
+            
+            # Gerar recomendações
+            recommendations = self._generate_recommendations(
+                product,
+                forecast_30d,
+                metrics
+            )
+            
+            logger.info(f"  ✓ [{product_name}]: forecast XGBoost gerado (30d={len(forecast_30d)}, 60d={len(forecast_60d)}, 90d={len(forecast_90d)})")
+            
+            forecasts.append(ProductForecast(
+                product_id=product_id,
+                product_name=product_name,
+                category=category,
+                historical_data=historical,
+                forecast_30d=forecast_30d,
+                forecast_60d=forecast_60d,
+                forecast_90d=forecast_90d,
+                metrics=metrics,
+                recommendations=recommendations
+            ))
+        
+        return forecasts
+
     def _forecast_by_product(
         self,
         products: List[Dict],
@@ -891,28 +1039,150 @@ class ProphetForecaster:
         logger.info(f"✅ Forecast por produto concluído: {len(forecasts)}/{total} produtos")
         return forecasts
 
-    def _forecast_by_category(
+    def _forecast_by_category_xgboost_only(
         self,
+        product_forecasts: List[ProductForecast],
         products: List[Dict],
-        historical_data: Dict[str, pd.DataFrame],
-        forecast_days: List[int]
+        historical_data: Dict[str, pd.DataFrame]
     ) -> List[CategoryForecast]:
         """
-        Gera forecast agregado por categoria
+        Gera forecasts de categoria agregando os forecasts XGBoost dos produtos.
+        Usado quando Prophet está desativado (dados mensais/esparsos).
+        Mais rápido e consistente: soma dos produtos = forecast da categoria.
         """
-        # Agrupar produtos por categoria
+        import time
+        cat_start = time.time()
+        
+        logger.info("🏷️ Gerando forecast por categoria (XGBoost agregado)...")
+        
+        # 1. Agrupar product_forecasts por categoria
         categories = {}
-        for product in products:
-            category = product.get("refined_category", "Sem Categoria")
-            if category not in categories:
-                categories[category] = []
-            categories[category].append(product)
+        for pf in product_forecasts:
+            cat = pf.category
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(pf)
         
-        forecasts = []
+        category_forecasts = []
         
-        for category, cat_products in categories.items():
-            logger.info(f"  🏷️  Categoria: {category} ({len(cat_products)} produtos)")
+        for cat_name, cat_pfs in categories.items():
+            logger.info(f"  🏷️  Categoria: {cat_name} ({len(cat_pfs)} produtos)")
             
+            try:
+                # 2. Agregar historical_data (somar vendas por data)
+                historical_dfs = []
+                for pf in cat_pfs:
+                    # Converter HistoricalDataPoint para DataFrame
+                    hist_data = [{"ds": pd.to_datetime(h.date), "y": h.quantity} for h in pf.historical_data]
+                    if hist_data:
+                        historical_dfs.append(pd.DataFrame(hist_data))
+                
+                if historical_dfs:
+                    aggregated_hist_df = pd.concat(historical_dfs).groupby('ds').sum().reset_index()
+                    aggregated_historical = [
+                        HistoricalDataPoint(
+                            date=row['ds'].isoformat(),
+                            quantity=float(row['y'])
+                        )
+                        for _, row in aggregated_hist_df.tail(30).iterrows()
+                    ]
+                else:
+                    aggregated_historical = []
+                
+                # 3. Agregar forecasts 30d, 60d, 90d (somar por data)
+                def aggregate_forecasts(forecast_list_of_lists):
+                    """Agrega forecasts de múltiplos produtos por data."""
+                    all_points = []
+                    for pf in cat_pfs:
+                        for forecast_list in [forecast_list_of_lists(pf)]:
+                            for fp in forecast_list:
+                                all_points.append({
+                                    'date': fp.date,
+                                    'predicted_quantity': fp.predicted_quantity,
+                                    'lower_bound': fp.lower_bound,
+                                    'upper_bound': fp.upper_bound
+                                })
+                    
+                    if not all_points:
+                        return []
+                    
+                    # Converter para DataFrame e agregar por data
+                    df = pd.DataFrame(all_points)
+                    df['date'] = pd.to_datetime(df['date'])
+                    aggregated = df.groupby('date').agg({
+                        'predicted_quantity': 'sum',
+                        'lower_bound': 'sum',
+                        'upper_bound': 'sum'
+                    }).reset_index()
+                    
+                    # Converter de volta para ForecastDataPoint
+                    return [
+                        ForecastDataPoint(
+                            date=row['date'].isoformat(),
+                            predicted_quantity=float(row['predicted_quantity']),
+                            lower_bound=float(row['lower_bound']),
+                            upper_bound=float(row['upper_bound'])
+                        )
+                        for _, row in aggregated.iterrows()
+                    ]
+                
+                forecast_30d = aggregate_forecasts(lambda pf: pf.forecast_30d)
+                forecast_60d = aggregate_forecasts(lambda pf: pf.forecast_60d)
+                forecast_90d = aggregate_forecasts(lambda pf: pf.forecast_90d)
+                
+                # 4. Calcular metrics agregadas (média ponderada por número de pontos)
+                total_mape = sum(pf.metrics.mape or 0 for pf in cat_pfs if pf.metrics.mape is not None)
+                total_mae = sum(pf.metrics.mae or 0 for pf in cat_pfs if pf.metrics.mae is not None)
+                total_rmse = sum(pf.metrics.rmse or 0 for pf in cat_pfs if pf.metrics.rmse is not None)
+                count = len(cat_pfs)
+                
+                metrics = ForecastMetrics(
+                    mape=total_mape / count if count > 0 else 0.0,
+                    rmse=total_rmse / count if count > 0 else 0.0,
+                    mae=total_mae / count if count > 0 else 0.0,
+                    trend="stable",
+                    seasonality_strength=0.0
+                )
+                
+                logger.info(f"    ✓ [{cat_name}] forecast agregado: 30d={len(forecast_30d)}, 60d={len(forecast_60d)}, 90d={len(forecast_90d)}")
+                
+                category_forecasts.append(CategoryForecast(
+                    category=cat_name,
+                    product_count=len(cat_pfs),
+                    historical_data=aggregated_historical,
+                    forecast_30d=forecast_30d,
+                    forecast_60d=forecast_60d,
+                    forecast_90d=forecast_90d,
+                    metrics=metrics
+                ))
+                
+            except Exception as e:
+                logger.error(f"    ✗ [{cat_name}] erro ao agregar: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                continue
+        
+        cat_sec = time.time() - cat_start
+        logger.info(f"[Forecast] Categorias XGBoost agregadas: {cat_sec:.1f}s ({len(category_forecasts)} categorias)")
+        
+        return category_forecasts
+
+    def _forecast_single_category(
+        self,
+        category: str,
+        cat_products: List[Dict],
+        historical_data: Dict[str, pd.DataFrame],
+        forecast_days: List[int]
+    ) -> Optional[CategoryForecast]:
+        """
+        Gera forecast para UMA categoria (para rodar em paralelo via ThreadPoolExecutor).
+        """
+        # Silenciar warnings do Prophet/Stan
+        import logging
+        logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
+        logging.getLogger("prophet").setLevel(logging.ERROR)
+        
+        try:
             # Agregar dados históricos
             aggregated_df = self._aggregate_historical_data(
                 cat_products,
@@ -920,15 +1190,15 @@ class ProphetForecaster:
             )
             
             if aggregated_df.empty:
-                continue
+                return None
 
             if len(aggregated_df) < self.MIN_POINTS:
                 logger.warning(
                     f"  ⚠️  Categoria {category}: poucos dados agregados ({len(aggregated_df)} pontos, mínimo {self.MIN_POINTS}), pulando"
                 )
-                continue
+                return None
 
-            # Treinar Prophet (feriados BR para dados reais)
+            # Treinar Prophet
             model = Prophet(
                 yearly_seasonality=True,
                 weekly_seasonality=True,
@@ -973,7 +1243,7 @@ class ProphetForecaster:
             forecast_60d_dict = self._clamp_daily_forecasts(_to_dict_list_fc(forecast_60d), aggregated_df)
             forecast_90d_dict = self._clamp_daily_forecasts(_to_dict_list_fc(forecast_90d), aggregated_df)
 
-            # Se dados agregados são mensais, agregar previsões diárias em mensais (mesma escala que histórico)
+            # Se dados agregados são mensais, agregar previsões diárias em mensais
             if self._is_historical_monthly(aggregated_df):
                 forecast_30d_agg = self._aggregate_daily_to_monthly(forecast_30d_dict)
                 forecast_60d_agg = self._aggregate_daily_to_monthly(forecast_60d_dict)
@@ -987,23 +1257,12 @@ class ProphetForecaster:
                 forecast_30d = [ForecastDataPoint(**d) for d in forecast_30d_agg]
                 forecast_60d = [ForecastDataPoint(**d) for d in forecast_60d_agg]
                 forecast_90d = [ForecastDataPoint(**d) for d in forecast_90d_agg]
-                logger.info(f"  [{category}] Previsões agregadas para mensal (categoria)")
+                logger.debug(f"  [{category}] Previsões agregadas para mensal (categoria)")
             
             # Calcular métricas
             metrics = self._calculate_metrics(aggregated_df, forecast_result, {"seasonality": "year-round"})
-
-            # Log valores finais por categoria (investigação Vendas Totais 60d/90d)
-            logger.info(
-                f"  [{category}] FINAL category forecast_30d: {[round(p.predicted_quantity, 2) for p in forecast_30d]}"
-            )
-            logger.info(
-                f"  [{category}] FINAL category forecast_60d: {[round(p.predicted_quantity, 2) for p in forecast_60d]}"
-            )
-            logger.info(
-                f"  [{category}] FINAL category forecast_90d: {[round(p.predicted_quantity, 2) for p in forecast_90d]}"
-            )
             
-            forecasts.append(CategoryForecast(
+            return CategoryForecast(
                 category=category,
                 product_count=len(cat_products),
                 historical_data=historical,
@@ -1011,7 +1270,69 @@ class ProphetForecaster:
                 forecast_60d=forecast_60d,
                 forecast_90d=forecast_90d,
                 metrics=metrics
-            ))
+            )
+        except Exception as e:
+            logger.error(f"  ✗ Erro ao processar categoria {category}: {e}")
+            return None
+
+    def _forecast_by_category(
+        self,
+        products: List[Dict],
+        historical_data: Dict[str, pd.DataFrame],
+        forecast_days: List[int]
+    ) -> List[CategoryForecast]:
+        """
+        Gera forecast agregado por categoria (PARALELO com ThreadPoolExecutor)
+        """
+        # Agrupar produtos por categoria
+        categories = {}
+        for product in products:
+            category = product.get("refined_category", "Sem Categoria")
+            if category not in categories:
+                categories[category] = []
+            categories[category].append(product)
+        
+        if not categories:
+            return []
+        
+        # Paralelizar usando ThreadPoolExecutor (mesmo padrão dos produtos)
+        total_categories = len(categories)
+        max_workers = min(8, total_categories)
+        
+        logger.info(f"🔮 Gerando forecast para {total_categories} categorias (PARALELO)...")
+        logger.info(f"⚡ Usando {max_workers} workers paralelos")
+        
+        forecasts = []
+        completed = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submeter todas as categorias para processamento paralelo
+            future_to_category = {
+                executor.submit(
+                    self._forecast_single_category,
+                    category,
+                    cat_products,
+                    historical_data,
+                    forecast_days
+                ): category
+                for category, cat_products in categories.items()
+            }
+            
+            # Coletar resultados conforme completam
+            for future in as_completed(future_to_category):
+                category_name = future_to_category[future]
+                completed += 1
+                try:
+                    result = future.result()
+                    if result is not None:
+                        forecasts.append(result)
+                        logger.info(f"  ✓ [{completed}/{total_categories}] {category_name}: forecast gerado")
+                    else:
+                        logger.warning(f"  ✗ [{completed}/{total_categories}] {category_name}: pulado (dados insuficientes)")
+                except Exception as e:
+                    logger.error(f"  ✗ [{completed}/{total_categories}] {category_name}: erro - {str(e)}")
+        
+        logger.info(f"✅ Forecast categorias concluído: {len(forecasts)}/{total_categories} categorias processadas")
         
         return forecasts
     
@@ -1430,15 +1751,24 @@ class ProphetForecaster:
         """
         Usa Model Router para escolher melhor forecast.
         Retorna no formato esperado: [{'date': '...', 'predicted_quantity': N, 'lower_bound': N, 'upper_bound': N}]
-        Fallback para Prophet se algo falhar.
+        Fallback para XGBoost se Prophet não rodou.
         """
         try:
+            # Se Prophet não rodou (toggle desativado), usar APENAS XGBoost
+            if not prophet_forecast or len(prophet_forecast) == 0:
+                if xgboost_forecast and len(xgboost_forecast) > 0:
+                    logger.debug(f"  [{product_name}] {horizon}d: XGBoost (Prophet não executado)")
+                    return self._xgboost_to_prophet_format(xgboost_forecast) if isinstance(xgboost_forecast[0], dict) and 'date' in xgboost_forecast[0] else xgboost_forecast
+                else:
+                    logger.warning(f"  [{product_name}] {horizon}d: SEM FORECAST (nem Prophet nem XGBoost)")
+                    return []
+            
             # Quando histórico é mensal e horizonte > 30d, usar só XGBoost
             # (Prophet gera diário com poucos dados mensais e explode ao reagregar)
             if hasattr(self, '_current_df_is_monthly') and self._current_df_is_monthly and horizon in [60, 90]:
                 if xgboost_forecast and any(p.get("predicted_quantity", 0) > 0 for p in xgboost_forecast):
                     logger.info(f"  [{product_name}] Histórico mensal + horizonte {horizon}d → usando só XGBoost")
-                    return self._xgboost_to_prophet_format(xgboost_forecast) if hasattr(xgboost_forecast[0], 'get') and 'date' not in str(type(xgboost_forecast[0])) else xgboost_forecast
+                    return self._xgboost_to_prophet_format(xgboost_forecast) if isinstance(xgboost_forecast[0], dict) and 'date' in xgboost_forecast[0] else xgboost_forecast
 
             # Se não tem XGBoost, usar Prophet
             if not xgboost_forecast or xgboost_mape is None:
@@ -1446,9 +1776,9 @@ class ProphetForecaster:
                     logger.debug(f"  [{product_name}] {horizon}d: Prophet (sem XGBoost)")
                 return prophet_forecast
 
-            # Se não tem Prophet, usar XGBoost
-            if not prophet_forecast or prophet_mape is None:
-                logger.debug(f"  [{product_name}] {horizon}d: XGBoost (sem Prophet)")
+            # Se não tem Prophet (mas passou pela primeira verificação), usar XGBoost
+            if prophet_mape is None:
+                logger.debug(f"  [{product_name}] {horizon}d: XGBoost (Prophet sem métricas)")
                 return self._xgboost_to_prophet_format(xgboost_forecast)
 
             # Usar Model Router (time_horizon deve ser 30, 60 ou 90)
@@ -1614,6 +1944,68 @@ class ProphetForecaster:
                 clamped.append(point)
 
         return clamped
+
+    def _should_use_prophet(self, sales_df: pd.DataFrame) -> dict:
+        """
+        Decide se Prophet deve ser executado baseado na qualidade/frequência dos dados.
+        
+        Prophet precisa de:
+        - Dados frequentes (diários ou semanais, não mensais)
+        - Volume mínimo de pontos (>= 90 para capturar sazonalidade)
+        
+        Returns:
+            {
+                'use_prophet': bool,
+                'reason': str,
+                'data_frequency': str,
+                'data_points': int
+            }
+        """
+        if sales_df is None or len(sales_df) == 0:
+            return {
+                'use_prophet': False,
+                'reason': 'Sem dados de vendas',
+                'data_frequency': 'unknown',
+                'data_points': 0
+            }
+        
+        data_points = len(sales_df)
+        
+        # Detectar se dados são mensais
+        if self._is_historical_monthly(sales_df):
+            return {
+                'use_prophet': False,
+                'reason': f'Dados mensais ({data_points} pontos). Prophet otimizado para dados diários. Usando apenas XGBoost.',
+                'data_frequency': 'monthly',
+                'data_points': data_points
+            }
+        
+        # Calcular gap médio entre pontos
+        date_range_days = (sales_df['ds'].max() - sales_df['ds'].min()).days
+        avg_gap = date_range_days / max(1, data_points - 1)
+        
+        if avg_gap <= 2:
+            frequency = 'daily'
+        elif avg_gap <= 10:
+            frequency = 'weekly'
+        else:
+            frequency = 'sparse'
+        
+        # Prophet precisa de >= 90 pontos E dados frequentes para sazonalidade
+        min_points = 90
+        use_prophet = data_points >= min_points and frequency in ('daily', 'weekly')
+        
+        if not use_prophet:
+            reason = f'Dados insuficientes para Prophet ({data_points} pontos {frequency}, mínimo {min_points} diários/semanais). Usando apenas XGBoost.'
+        else:
+            reason = f'Dados adequados para Prophet ({data_points} pontos {frequency}). Rodando Prophet + XGBoost para melhor acurácia.'
+        
+        return {
+            'use_prophet': use_prophet,
+            'reason': reason,
+            'data_frequency': frequency,
+            'data_points': data_points
+        }
 
     def _is_historical_monthly(self, df: pd.DataFrame) -> bool:
         """
