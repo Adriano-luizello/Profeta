@@ -42,8 +42,8 @@ touch .env.local
 ```env
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key-from-supabase>
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key-from-supabase>
 
 # App
 NEXT_PUBLIC_APP_URL=http://localhost:3001

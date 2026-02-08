@@ -179,7 +179,8 @@ Isso significa:
 
 ```bash
 # .env.local
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+# Obter no Supabase: Settings → API → service_role (secret)
+SUPABASE_SERVICE_ROLE_KEY=<sua-service-role-key>
 ```
 
 Obter em: **Supabase Dashboard → Settings → API → service_role (secret)**
@@ -298,7 +299,8 @@ const MAX_MESSAGES_IN_CONTEXT = 50   // ← Editar aqui
 2. Copiar chave `service_role` (secret)
 3. Adicionar em `.env.local`:
    ```bash
-   SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJI...
+   # Obter no Supabase: Settings → API → service_role
+   SUPABASE_SERVICE_ROLE_KEY=<sua-service-role-key>
    ```
 4. Reiniciar servidor
 

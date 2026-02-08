@@ -233,7 +233,8 @@ WHERE user_id = 'USER_ID_AQUI';
 **Solução:**
 ```bash
 # .env.local
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+# Obter no Supabase: Settings → API → service_role (secret)
+SUPABASE_SERVICE_ROLE_KEY=<sua-service-role-key>
 ```
 
 Obter a chave em: Supabase Dashboard > Settings > API > `service_role` (secret)
