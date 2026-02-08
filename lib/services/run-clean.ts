@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { cleanProducts, calculateCleaningStats } from '@/lib/services/data-cleaner'
+import { updatePipelineStatus } from '@/lib/services/update-pipeline-status'
 
 export interface RunCleanResult {
   success: boolean
@@ -30,10 +31,8 @@ export async function runClean(
     return { success: false, error: 'Limpeza já em andamento' }
   }
 
-  await supabase
-    .from('analyses')
-    .update({ status: 'cleaning' })
-    .eq('id', analysisId)
+  // Marcar início do pipeline e status de limpeza
+  await updatePipelineStatus(supabase, analysisId, 'cleaning', { markAsStarted: true })
 
   try {
     const { data: products, error: productsError } = await supabase
@@ -85,13 +84,11 @@ export async function runClean(
         .eq('id', p.id)
     }
 
+    // Atualizar produtos processados (não mudar status aqui, deixar para o pipeline)
     await supabase
       .from('analyses')
       .update({
-        status: 'completed',
-        processed_products: stats.valid,
-        completed_at: new Date().toISOString(),
-        error_message: null
+        processed_products: stats.valid
       })
       .eq('id', analysisId)
 
@@ -104,16 +101,14 @@ export async function runClean(
       }
     }
   } catch (e) {
-    await supabase
-      .from('analyses')
-      .update({
-        status: 'failed',
-        error_message: e instanceof Error ? e.message : 'Erro desconhecido'
-      })
-      .eq('id', analysisId)
+    const errorMessage = e instanceof Error ? e.message : 'Erro desconhecido'
+    await updatePipelineStatus(supabase, analysisId, 'failed', {
+      error: `Erro na limpeza: ${errorMessage}`,
+      markAsCompleted: true
+    })
     return {
       success: false,
-      error: e instanceof Error ? e.message : 'Erro ao limpar'
+      error: errorMessage
     }
   }
 }

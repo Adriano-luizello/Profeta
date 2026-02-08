@@ -2,10 +2,13 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { runClean } from '@/lib/services/run-clean'
 import { runForecast } from '@/lib/services/run-forecast'
+import { updatePipelineStatus } from '@/lib/services/update-pipeline-status'
 
 /**
  * Pipeline: limpeza (GPT-4) → previsão (Prophet).
  * Chamado automaticamente após upload ou manualmente.
+ * 
+ * Atualiza status persistido em cada etapa para tracking em tempo real.
  */
 export async function POST(
   _request: Request,
@@ -22,48 +25,79 @@ export async function POST(
   // ===== TIMING: PIPELINE START =====
   const pipelineStart = Date.now()
 
-  // ===== ETAPA 1: LIMPEZA =====
-  const cleanStart = Date.now()
-  const cleanResult = await runClean(supabase, user.id, analysisId)
-  const cleanMs = Date.now() - cleanStart
-  
-  if (!cleanResult.success) {
+  try {
+    // ===== ETAPA 1: LIMPEZA =====
+    const cleanStart = Date.now()
+    const cleanResult = await runClean(supabase, user.id, analysisId)
+    const cleanMs = Date.now() - cleanStart
+    
+    if (!cleanResult.success) {
+      // runClean já atualizou status='failed' com erro específico
+      return NextResponse.json(
+        { error: cleanResult.error || 'Falha na limpeza' },
+        { status: 400 }
+      )
+    }
+
+    const { count } = await supabase
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('analysis_id', analysisId)
+    const totalProducts = count ?? 0
+
+    // ===== ETAPA 2: FORECAST =====
+    // Atualizar status antes de iniciar forecast
+    await updatePipelineStatus(supabase, analysisId, 'forecasting')
+    
+    const forecastStart = Date.now()
+    const forecastResult = await runForecast(supabase, user.id, analysisId)
+    const forecastMs = Date.now() - forecastStart
+    
+    if (!forecastResult.success) {
+      // Atualizar status para failed com erro específico
+      await updatePipelineStatus(supabase, analysisId, 'failed', {
+        error: `Erro no forecast: ${forecastResult.error || 'Erro desconhecido'}`,
+        markAsCompleted: true
+      })
+      
+      return NextResponse.json(
+        { error: forecastResult.error || 'Falha na previsão', clean: true },
+        { status: 400 }
+      )
+    }
+
+    // ===== PIPELINE CONCLUÍDO =====
+    await updatePipelineStatus(supabase, analysisId, 'completed', {
+      markAsCompleted: true
+    })
+
+    // ===== TIMING: PIPELINE END =====
+    const totalMs = Date.now() - pipelineStart
+    const cleanPerProduct = totalProducts > 0 ? Math.round(cleanMs / totalProducts) : 0
+    const forecastPerProduct = totalProducts > 0 ? Math.round(forecastMs / totalProducts) : 0
+
+    console.log(`[Pipeline] Total: ${totalMs}ms | Clean: ${cleanMs}ms | Forecast: ${forecastMs}ms`)
+    console.log(`[Pipeline] Produtos: ${totalProducts} | Clean/produto: ${cleanPerProduct}ms | Forecast/produto: ${forecastPerProduct}ms`)
+
+    return NextResponse.json({
+      ok: true,
+      analysisId,
+      clean: true,
+      forecast: true
+    })
+    
+  } catch (error) {
+    // Capturar qualquer erro não tratado
+    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido no pipeline'
+    
+    await updatePipelineStatus(supabase, analysisId, 'failed', {
+      error: errorMessage,
+      markAsCompleted: true
+    })
+    
     return NextResponse.json(
-      { error: cleanResult.error || 'Falha na limpeza' },
-      { status: 400 }
+      { error: errorMessage },
+      { status: 500 }
     )
   }
-
-  const { count } = await supabase
-    .from('products')
-    .select('*', { count: 'exact', head: true })
-    .eq('analysis_id', analysisId)
-  const totalProducts = count ?? 0
-
-  // ===== ETAPA 2: FORECAST =====
-  const forecastStart = Date.now()
-  const forecastResult = await runForecast(supabase, user.id, analysisId)
-  const forecastMs = Date.now() - forecastStart
-  
-  if (!forecastResult.success) {
-    return NextResponse.json(
-      { error: forecastResult.error || 'Falha na previsão', clean: true },
-      { status: 400 }
-    )
-  }
-
-  // ===== TIMING: PIPELINE END =====
-  const totalMs = Date.now() - pipelineStart
-  const cleanPerProduct = totalProducts > 0 ? Math.round(cleanMs / totalProducts) : 0
-  const forecastPerProduct = totalProducts > 0 ? Math.round(forecastMs / totalProducts) : 0
-
-  console.log(`[Pipeline] Total: ${totalMs}ms | Clean: ${cleanMs}ms | Forecast: ${forecastMs}ms`)
-  console.log(`[Pipeline] Produtos: ${totalProducts} | Clean/produto: ${cleanPerProduct}ms | Forecast/produto: ${forecastPerProduct}ms`)
-
-  return NextResponse.json({
-    ok: true,
-    analysisId,
-    clean: true,
-    forecast: true
-  })
 }
