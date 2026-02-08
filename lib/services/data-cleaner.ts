@@ -26,6 +26,9 @@ interface CleaningResult {
  * Limpa e enriquece um único produto usando GPT-4
  */
 export async function cleanProduct(product: ProductToClean): Promise<CleaningResult> {
+  // ===== TIMING: GPT START =====
+  const gptStart = Date.now()
+  
   try {
     // Aguardar rate limit se necessário
     await rateLimiter.waitIfNeeded()
@@ -76,6 +79,9 @@ export async function cleanProduct(product: ProductToClean): Promise<CleaningRes
     const outputTokens = estimateTokens(content)
     const cost = estimateCost(inputTokens, outputTokens)
 
+    // ===== TIMING: GPT END =====
+    const gptMs = Date.now() - gptStart
+
     return {
       success: true,
       data: cleaned,
@@ -87,7 +93,8 @@ export async function cleanProduct(product: ProductToClean): Promise<CleaningRes
     }
 
   } catch (error) {
-    console.error(`Erro ao limpar produto ${product.id}:`, error)
+    const gptMs = Date.now() - gptStart
+    console.error(`[Clean] Erro ao limpar produto ${product.id} (${gptMs}ms):`, error)
     
     return {
       success: false,
@@ -138,11 +145,15 @@ export async function cleanProducts(
     batches.push(products.slice(i, i + BATCH_SIZE))
   }
 
+  let totalGptCalls = 0
+  
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i]
     const batchNum = i + 1
     const totalBatches = batches.length
 
+    // ===== TIMING: BATCH START =====
+    const batchStart = Date.now()
     console.log(`📦 Processando lote ${batchNum}/${totalBatches} (${batch.length} produtos)...`)
 
     const batchPromises = batch.map(async (product): Promise<CleaningResult> => {
@@ -151,6 +162,7 @@ export async function cleanProducts(
 
       while (attempts < maxRetries) {
         result = await cleanProduct(product)
+        totalGptCalls++
         if (result.success) break
         attempts++
         if (attempts < maxRetries) {
@@ -170,12 +182,17 @@ export async function cleanProducts(
     const batchResults = await Promise.all(batchPromises)
     results.push(...batchResults)
 
-    console.log(`✅ Lote ${batchNum}/${totalBatches} concluído (${batchResults.length} produtos limpos)`)
+    // ===== TIMING: BATCH END =====
+    const batchMs = Date.now() - batchStart
+    const avgPerProduct = Math.round(batchMs / batch.length)
+    console.log(`[Clean] Batch ${batchNum}: ${batch.length} produtos | ${batchMs}ms total | ${avgPerProduct}ms/produto`)
 
     if (i < batches.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
   }
+
+  console.log(`[Clean] Chamadas GPT-4: ${totalGptCalls} total`)
 
   console.log(`✅ Limpeza concluída: ${results.length} produtos processados`)
   return results

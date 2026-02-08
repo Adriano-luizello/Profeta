@@ -135,18 +135,25 @@ class ProphetForecaster:
         Returns:
             ForecastResponse com previsões
         """
+        import time
+        
+        # ===== TIMING: FORECAST TOTAL START =====
+        forecast_total_start = time.time()
+        
         logger.info("=" * 60)
         logger.info("PROPHET FORECAST - INICIANDO")
         logger.info("=" * 60)
         logger.info(f"📊 Buscando produtos para análise {analysis_id}")
 
-        # Buscar produtos limpos
+        # ===== TIMING: FETCH PRODUTOS START =====
+        fetch_start = time.time()
         products = await self._fetch_products(analysis_id)
+        fetch_sec = time.time() - fetch_start
 
         if not products:
             raise ValueError(f"Nenhum produto encontrado para análise {analysis_id}")
 
-        logger.info(f"📦 {len(products)} produtos encontrados")
+        logger.info(f"📦 {len(products)} produtos encontrados ({fetch_sec:.2f}s)")
 
         product_ids = [p["id"] for p in products]
 
@@ -177,6 +184,9 @@ class ProphetForecaster:
         # ============================================
         # FASE 2: Feature Engineering
         # ============================================
+        # ===== TIMING: FEATURE ENGINEERING START =====
+        fe_start = time.time()
+        
         if not use_synthetic and not sales_df.empty:
             logger.info("🔧 Calculando features para XGBoost...")
 
@@ -237,14 +247,20 @@ class ProphetForecaster:
             else:
                 logger.warning("⚠️ Nenhuma feature calculada")
 
-            logger.info("✅ Feature engineering concluído")
+            # ===== TIMING: FEATURE ENGINEERING END =====
+            fe_sec = time.time() - fe_start
+            logger.info(f"✅ Feature engineering concluído ({fe_sec:.2f}s)")
         else:
-            logger.info("⏭️ Feature engineering omitido (dados sintéticos ou sem histórico)")
+            fe_sec = time.time() - fe_start
+            logger.info(f"⏭️ Feature engineering omitido ({fe_sec:.2f}s)")
         # ============================================
 
         # ============================================
-        # FASE 2: XGBoost Forecasting
+        # FASE 3: XGBoost Forecasting
         # ============================================
+        # ===== TIMING: XGBOOST START =====
+        xgb_start = time.time()
+        
         if not use_synthetic and not sales_df.empty and by_product:
             logger.info("🤖 Treinando modelos XGBoost por produto...")
 
@@ -407,9 +423,12 @@ class ProphetForecaster:
             else:
                 logger.warning("⚠️ Nenhum modelo XGBoost treinado")
 
-            logger.info("✅ XGBoost forecasting concluído")
+            # ===== TIMING: XGBOOST END =====
+            xgb_sec = time.time() - xgb_start
+            logger.info(f"✅ XGBoost forecasting concluído ({xgb_sec:.2f}s)")
         else:
-            logger.info("⏭️ XGBoost omitido (dados sintéticos, sem histórico ou sem by_product)")
+            xgb_sec = time.time() - xgb_start
+            logger.info(f"⏭️ XGBoost omitido ({xgb_sec:.2f}s)")
         # ============================================
 
         response = ForecastResponse(
@@ -417,9 +436,12 @@ class ProphetForecaster:
             created_at=datetime.now().isoformat()
         )
         
+        # ===== TIMING: PROPHET START =====
+        prophet_start = time.time()
+        
         # Forecast por produto
         if by_product:
-            logger.info("🔮 Gerando forecast por produto...")
+            logger.info("🔮 Gerando forecast por produto (Prophet)...")
             response.product_forecasts = self._forecast_by_product(
                 products,
                 historical_data,
@@ -428,12 +450,15 @@ class ProphetForecaster:
         
         # Forecast por categoria
         if by_category:
-            logger.info("🔮 Gerando forecast por categoria...")
+            logger.info("🔮 Gerando forecast por categoria (Prophet)...")
             response.category_forecasts = self._forecast_by_category(
                 products,
                 historical_data,
                 forecast_days
             )
+        
+        # ===== TIMING: PROPHET END =====
+        prophet_sec = time.time() - prophet_start
         
         # Estatísticas gerais
         response.stats = {
@@ -442,6 +467,16 @@ class ProphetForecaster:
             "forecast_horizons": forecast_days,
             "generated_at": datetime.now().isoformat()
         }
+        
+        # ===== TIMING: FORECAST TOTAL END =====
+        forecast_total_sec = time.time() - forecast_total_start
+        
+        # Log final com breakdown de tempo
+        logger.info("=" * 60)
+        logger.info("[Forecast] TIMING SUMMARY")
+        logger.info(f"[Forecast] Total: {forecast_total_sec:.1f}s | FE: {fe_sec:.1f}s | XGB: {xgb_sec:.1f}s | Prophet: {prophet_sec:.1f}s")
+        logger.info(f"[Forecast] {len(products)} produtos | Prophet/produto: {prophet_sec/len(products):.2f}s")
+        logger.info("=" * 60)
         
         # Calcular e persistir avg_daily_demand por produto
         if response.product_forecasts:

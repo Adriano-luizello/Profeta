@@ -59,10 +59,15 @@ export async function runClean(
       })
     )
 
-    const start = Date.now()
+    // ===== TIMING: LIMPEZA START =====
+    const cleanStart = Date.now()
     const results = await cleanProducts(productsWithHistory)
-    const processingTime = Date.now() - start
+    const cleanMs = Date.now() - cleanStart
     const stats = calculateCleaningStats(results)
+
+    console.log(`[Clean] Total: ${cleanMs}ms | ${productsWithHistory.length} produtos | Custo: $${stats.total_cost_usd.toFixed(4)}`)
+    
+    const processingTime = cleanMs
 
     for (let i = 0; i < results.length; i++) {
       const r = results[i]

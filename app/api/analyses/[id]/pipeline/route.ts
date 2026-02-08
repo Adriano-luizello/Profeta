@@ -19,7 +19,14 @@ export async function POST(
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
 
+  // ===== TIMING: PIPELINE START =====
+  const pipelineStart = Date.now()
+
+  // ===== ETAPA 1: LIMPEZA =====
+  const cleanStart = Date.now()
   const cleanResult = await runClean(supabase, user.id, analysisId)
+  const cleanMs = Date.now() - cleanStart
+  
   if (!cleanResult.success) {
     return NextResponse.json(
       { error: cleanResult.error || 'Falha na limpeza' },
@@ -32,19 +39,26 @@ export async function POST(
     .select('*', { count: 'exact', head: true })
     .eq('analysis_id', analysisId)
   const totalProducts = count ?? 0
-  const estimatedSeconds = Math.ceil(totalProducts * 7)
-  const estimatedMinutes = Math.ceil(estimatedSeconds / 60)
-  console.log(
-    `⏱️  Tempo estimado para ${totalProducts} produtos: ${estimatedMinutes} minuto(s)`
-  )
 
+  // ===== ETAPA 2: FORECAST =====
+  const forecastStart = Date.now()
   const forecastResult = await runForecast(supabase, user.id, analysisId)
+  const forecastMs = Date.now() - forecastStart
+  
   if (!forecastResult.success) {
     return NextResponse.json(
       { error: forecastResult.error || 'Falha na previsão', clean: true },
       { status: 400 }
     )
   }
+
+  // ===== TIMING: PIPELINE END =====
+  const totalMs = Date.now() - pipelineStart
+  const cleanPerProduct = totalProducts > 0 ? Math.round(cleanMs / totalProducts) : 0
+  const forecastPerProduct = totalProducts > 0 ? Math.round(forecastMs / totalProducts) : 0
+
+  console.log(`[Pipeline] Total: ${totalMs}ms | Clean: ${cleanMs}ms | Forecast: ${forecastMs}ms`)
+  console.log(`[Pipeline] Produtos: ${totalProducts} | Clean/produto: ${cleanPerProduct}ms | Forecast/produto: ${forecastPerProduct}ms`)
 
   return NextResponse.json({
     ok: true,
