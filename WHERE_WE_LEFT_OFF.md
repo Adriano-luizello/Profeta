@@ -306,8 +306,14 @@ Tudo abaixo já está deployado e funcionando:
 
 **Deployado em produção (11/02/2026):**
 - Commit: `530cb02` pushed para `main`
-- Vercel: Frontend atualizado automaticamente
-- Render: Backend Python com XGBoost paralelo em deploy
+- Vercel: Frontend atualizado automaticamente ✅
+- Render: Backend Python com XGBoost paralelo ✅ (deploy manual com clear cache)
+
+**Performance confirmada em produção:**
+- XGBoost: 3.8s → 2.4s (37% mais rápido com 10 produtos)
+- Clean: 8.3s → 6.3s (23% mais rápido, batch queries)
+- Pipeline total: ~30-40% mais rápida
+- Logs de paralelização visíveis: `[N/10] Produto X: XGBoost concluído`
 
 ---
 
