@@ -19,7 +19,7 @@ const MAX_MESSAGE_LENGTH = 2000 // caracteres por mensagem
 const MAX_MESSAGES_IN_CONTEXT = 50 // mensagens no histórico enviado
 
 function toolToChartQuery(toolName: string, toolInput: unknown): ChartQuery | null {
-  const input = toolInput as { days?: number; period_days?: number; view?: string; urgency_filter?: string } | null | undefined
+  const input = toolInput as { days?: number; period_days?: number; view?: string; urgency_filter?: string; filter?: string } | null | undefined
   switch (toolName) {
     case 'get_forecast_analysis': {
       const days = input?.days
@@ -40,6 +40,12 @@ function toolToChartQuery(toolName: string, toolInput: unknown): ChartQuery | nu
         type: 'pareto',
         period_days: input?.period_days ?? 90,
         view: input?.view ?? 'products'
+      }
+    }
+    case 'get_dead_stock_analysis': {
+      return {
+        type: 'dead_stock',
+        filter: input?.filter ?? 'all'
       }
     }
     default:

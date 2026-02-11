@@ -8,7 +8,8 @@ import {
   getSalesByDate,
   getForecastsByDate,
   getDashboardKpis,
-  getParetoMetrics
+  getParetoMetrics,
+  getDeadStockMetrics
 } from '@/lib/dashboard-data'
 import { getSupplyChainMetrics } from '@/lib/supply-chain'
 import { format } from 'date-fns'
@@ -261,12 +262,127 @@ async function paretoTable(
   return paretoTable(supabase, userId, periodDays, 'products')
 }
 
+/**
+ * Formata tendência de forecast
+ */
+function formatTrend(trend: string | null): string {
+  if (!trend) return '—'
+  switch(trend) {
+    case 'growing': return '📈 Crescente'
+    case 'declining': return '📉 Declinante'
+    case 'stable': return '➡️ Estável'
+    case 'zero': return '⏸️ Zero'
+    default: return '—'
+  }
+}
+
+/**
+ * Gera dados para análise de estoque parado
+ */
+async function deadStockTable(
+  supabase: SupabaseClient,
+  userId: string,
+  filter: string = 'all'
+): Promise<ChartOutput> {
+  const metrics = await getDeadStockMetrics(supabase, userId)
+  
+  if (!metrics.length) {
+    return {
+      chartType: 'table',
+      chartData: [{
+        mensagem: 'Sem dados de produtos para análise de estoque parado.'
+      }]
+    }
+  }
+  
+  // Filtro: summary (resumo executivo)
+  if (filter === 'summary') {
+    const deadProducts = metrics.filter(m => m.status === 'dead')
+    const slowProducts = metrics.filter(m => m.status === 'slow')
+    
+    const capitalDead = deadProducts.reduce((sum, m) => sum + (m.capital_locked ?? 0), 0)
+    const capitalSlow = slowProducts.reduce((sum, m) => sum + (m.capital_locked ?? 0), 0)
+    const totalMonthlyCost = metrics.reduce((sum, m) => sum + (m.monthly_storage_cost ?? 0), 0)
+    
+    const toDiscontinue = metrics.filter(m => m.recommendation_type === 'discontinue').length
+    const toDiscount = metrics.filter(m => m.recommendation_type === 'discount').length
+    const toMonitor = metrics.filter(m => m.recommendation_type === 'monitor').length
+    
+    return {
+      chartType: 'table',
+      chartData: [
+        { metrica: 'Produtos parados (0 vendas em 90d)', valor: `${deadProducts.length} produtos` },
+        { metrica: 'Produtos lentos', valor: `${slowProducts.length} produtos` },
+        { metrica: 'Capital total preso (parados)', valor: formatBRL(capitalDead) },
+        { metrica: 'Capital total preso (lentos)', valor: formatBRL(capitalSlow) },
+        { metrica: 'Custo de oportunidade mensal', valor: `~${formatBRL(totalMonthlyCost)}/mês` },
+        { metrica: 'Recomendação: descontinuar', valor: `${toDiscontinue} produtos` },
+        { metrica: 'Recomendação: desconto', valor: `${toDiscount} produtos` },
+        { metrica: 'Recomendação: monitorar', valor: `${toMonitor} produtos` }
+      ]
+    }
+  }
+  
+  // Filtros: 'all' ou 'dead'
+  let filtered = metrics
+  
+  if (filter === 'dead') {
+    filtered = metrics.filter(m => m.status === 'dead')
+  } else {
+    // 'all': excluir apenas produtos healthy
+    filtered = metrics.filter(m => m.status !== 'healthy')
+  }
+  
+  if (!filtered.length) {
+    return {
+      chartType: 'table',
+      chartData: [{
+        mensagem: '✅ Nenhum produto parado. Todos os produtos tiveram vendas nos últimos 90 dias.'
+      }]
+    }
+  }
+  
+  // Tabela detalhada
+  const rows = filtered.map(m => {
+    const vendasText = m.total_quantity_90d === 0 
+      ? '0 un'
+      : `${m.total_quantity_90d} un (${formatBRL(m.total_revenue_90d)})`
+    
+    const ultimaVendaText = m.days_since_last_sale !== null 
+      ? `Há ${m.days_since_last_sale} dias`
+      : 'Sem vendas'
+    
+    const capitalText = m.capital_locked !== null 
+      ? formatBRL(m.capital_locked)
+      : '—'
+    
+    const custoMensalText = m.monthly_storage_cost !== null 
+      ? `~${formatBRL(m.monthly_storage_cost)}/mês`
+      : '—'
+    
+    return {
+      status: m.status_label,
+      produto: m.product_name,
+      categoria: m.refined_category ?? '—',
+      vendas_90d: vendasText,
+      ultima_venda: ultimaVendaText,
+      capital_preso: capitalText,
+      custo_mensal: custoMensalText,
+      tendencia: formatTrend(m.forecast_trend),
+      recomendacao: m.recommendation
+    }
+  })
+  
+  return { chartType: 'table', chartData: rows }
+}
+
 export type ChartQuery =
   | { type: 'forecast'; days?: number }
   | { type: 'line'; days?: number }
   | { type: 'supply_chain'; urgency_filter?: string }
   | { type: 'alertas' }
   | { type: 'pareto'; period_days?: number; view?: string }
+  | { type: 'dead_stock'; filter?: string }
 
 /**
  * Gera dados de gráfico conforme a query.
@@ -288,6 +404,8 @@ export async function generateChartData(
       return alertasTable(supabase, userId)
     case 'pareto':
       return paretoTable(supabase, userId, query.period_days, query.view)
+    case 'dead_stock':
+      return deadStockTable(supabase, userId, query.filter)
     default:
       return null
   }

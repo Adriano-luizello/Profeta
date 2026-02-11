@@ -240,6 +240,36 @@ export interface ParetoMetrics {
   days_until_stockout: number | null
 }
 
+export interface DeadStockMetrics {
+  product_id: string
+  product_name: string
+  refined_category: string | null
+  price: number | null
+  current_stock: number | null
+  
+  // Métricas de vendas
+  total_revenue_90d: number         // Receita nos últimos 90 dias
+  total_quantity_90d: number        // Unidades vendidas nos últimos 90 dias
+  days_since_last_sale: number | null  // Dias desde a última venda (null se nunca vendeu)
+  avg_daily_sales: number           // Média diária de vendas no período
+  
+  // Classificação de saúde do produto
+  status: 'dead' | 'slow' | 'healthy'
+  status_label: string              // "⚫ Parado" | "🟠 Lento" | "🟢 Saudável"
+  
+  // Impacto financeiro
+  capital_locked: number | null     // current_stock × price (capital preso)
+  monthly_storage_cost: number | null  // Estimativa: capital_locked × 2% ao mês
+  
+  // Forecast (tendência)
+  forecast_trend: 'growing' | 'stable' | 'declining' | 'zero' | null
+  forecast_next_90d_qty: number | null  // Quantidade prevista para os próximos 90 dias
+  
+  // Recomendação
+  recommendation: string            // Texto acionável
+  recommendation_type: 'discontinue' | 'discount' | 'monitor' | 'ok'
+}
+
 /**
  * KPIs para dashboard: produtos em risco (recomendação de reposição) e stockouts evitados.
  * Usa a análise mais recente para evitar queries muito grandes.
@@ -616,4 +646,211 @@ export async function getParetoMetrics(
   }
 
   return productMetrics
+}
+
+/**
+ * Análise de estoque parado e produtos de baixa performance
+ * Identifica produtos sem vendas ou com vendas baixas, calcula capital preso e recomenda ações
+ */
+export async function getDeadStockMetrics(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<DeadStockMetrics[]> {
+  // 1. Buscar análise mais recente
+  const analysisId = await getLatestAnalysis(supabase, userId)
+  if (!analysisId) return []
+
+  // 2. Calcular datas
+  const today = new Date()
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - 90)
+  const cutoffDateStr = cutoffDate.toISOString().slice(0, 10)
+  
+  const futureDate = new Date()
+  futureDate.setDate(futureDate.getDate() + 90)
+  const futureDateStr = futureDate.toISOString().slice(0, 10)
+
+  // 3. Buscar produtos
+  const { data: products, error: productsError } = await supabase
+    .from('products')
+    .select('id, cleaned_name, original_name, refined_category, price, current_stock')
+    .eq('analysis_id', analysisId)
+    .limit(MAX_PRODUCTS_PER_QUERY)
+
+  if (productsError || !products?.length) {
+    if (productsError) console.error('[dead_stock] getDeadStockMetrics products:', productsError.message)
+    return []
+  }
+
+  const productIds = products.map(p => p.id)
+  const productMap = new Map(products.map(p => [p.id, p]))
+
+  // 4. Buscar sales_history dos últimos 90 dias
+  const { data: sales, error: salesError } = await supabase
+    .from('sales_history')
+    .select('product_id, quantity, revenue, date')
+    .in('product_id', productIds)
+    .gte('date', cutoffDateStr)
+
+  if (salesError) {
+    console.error('[dead_stock] getDeadStockMetrics sales_history:', salesError.message)
+  }
+
+  // 5. Buscar forecasts futuros (próximos 90 dias)
+  const { data: forecasts, error: forecastsError } = await supabase
+    .from('forecasts')
+    .select('product_id, predicted_quantity, forecast_date')
+    .in('product_id', productIds)
+    .lte('forecast_date', futureDateStr)
+    .gte('forecast_date', today.toISOString().slice(0, 10))
+
+  if (forecastsError) {
+    console.error('[dead_stock] getDeadStockMetrics forecasts:', forecastsError.message)
+  }
+
+  // 6. Agregar vendas por produto
+  const salesByProduct = new Map<string, { revenue: number; quantity: number; lastSaleDate: Date | null }>()
+  
+  for (const sale of sales ?? []) {
+    const pid = sale.product_id
+    const current = salesByProduct.get(pid) ?? { revenue: 0, quantity: 0, lastSaleDate: null }
+    const product = productMap.get(pid)
+    
+    const saleRevenue = sale.revenue != null 
+      ? Number(sale.revenue)
+      : (product?.price != null ? Number(sale.quantity) * Number(product.price) : 0)
+    
+    const saleDate = new Date(sale.date)
+    const lastDate = current.lastSaleDate
+    
+    salesByProduct.set(pid, {
+      revenue: current.revenue + saleRevenue,
+      quantity: current.quantity + Number(sale.quantity),
+      lastSaleDate: lastDate && saleDate < lastDate ? lastDate : saleDate
+    })
+  }
+
+  // 7. Agregar forecasts por produto
+  const forecastByProduct = new Map<string, number>()
+  
+  for (const forecast of forecasts ?? []) {
+    const pid = forecast.product_id
+    const current = forecastByProduct.get(pid) ?? 0
+    forecastByProduct.set(pid, current + Number(forecast.predicted_quantity))
+  }
+
+  // 8. Criar métricas por produto
+  const deadStockMetrics = products.map(p => {
+    const salesData = salesByProduct.get(p.id) ?? { revenue: 0, quantity: 0, lastSaleDate: null }
+    const forecastQty = forecastByProduct.get(p.id) ?? null
+    
+    const price = p.price != null ? Number(p.price) : null
+    const stock = p.current_stock != null ? Number(p.current_stock) : null
+    
+    // Métricas de vendas
+    const total_revenue_90d = salesData.revenue
+    const total_quantity_90d = salesData.quantity
+    const avg_daily_sales = total_quantity_90d / 90
+    
+    const days_since_last_sale = salesData.lastSaleDate 
+      ? Math.floor((today.getTime() - salesData.lastSaleDate.getTime()) / (1000 * 60 * 60 * 24))
+      : null
+    
+    // Classificação de status
+    let status: DeadStockMetrics['status']
+    let status_label: string
+    
+    if (total_quantity_90d === 0) {
+      status = 'dead'
+      status_label = '⚫ Parado'
+    } else if (avg_daily_sales < 0.1 || (days_since_last_sale !== null && days_since_last_sale > 30)) {
+      status = 'slow'
+      status_label = '🟠 Lento'
+    } else {
+      status = 'healthy'
+      status_label = '🟢 Saudável'
+    }
+    
+    // Impacto financeiro
+    const capital_locked = stock != null && price != null ? stock * price : null
+    const monthly_storage_cost = capital_locked != null ? capital_locked * 0.02 : null
+    
+    // Tendência de forecast
+    let forecast_trend: DeadStockMetrics['forecast_trend'] = null
+    const forecast_next_90d_qty = forecastQty
+    
+    if (forecastQty !== null) {
+      if (forecastQty < 1) {
+        forecast_trend = 'zero'
+      } else if (total_quantity_90d > 0) {
+        if (forecastQty > total_quantity_90d * 1.1) {
+          forecast_trend = 'growing'
+        } else if (forecastQty < total_quantity_90d * 0.5) {
+          forecast_trend = 'declining'
+        } else {
+          forecast_trend = 'stable'
+        }
+      } else {
+        forecast_trend = forecastQty > 5 ? 'growing' : 'zero'
+      }
+    }
+    
+    // Recomendação
+    let recommendation: string
+    let recommendation_type: DeadStockMetrics['recommendation_type']
+    
+    if (status === 'dead') {
+      if (forecast_trend === 'zero' || forecast_trend === 'declining' || forecast_trend === null) {
+        recommendation_type = 'discontinue'
+        const daysText = days_since_last_sale !== null ? `${days_since_last_sale} dias` : 'nunca'
+        const capitalText = capital_locked !== null ? `, capital preso: R$ ${capital_locked.toFixed(2)}` : ''
+        recommendation = `⛔ Descontinuar — sem vendas há ${daysText}, forecast próximo de zero${capitalText}`
+      } else {
+        recommendation_type = 'monitor'
+        recommendation = '👀 Monitorar — sem vendas recentes, mas forecast indica possível recuperação'
+      }
+    } else if (status === 'slow' && capital_locked !== null && capital_locked > 0) {
+      recommendation_type = 'discount'
+      const monthlyCost = monthly_storage_cost !== null ? Math.round(monthly_storage_cost) : 0
+      recommendation = `🏷️ Considerar desconto — vendendo apenas ${avg_daily_sales.toFixed(1)} un/dia, capital preso de R$ ${capital_locked.toFixed(2)} custa ~R$ ${monthlyCost}/mês parado`
+    } else {
+      recommendation_type = 'ok'
+      recommendation = '✅ Produto saudável — vendas regulares'
+    }
+    
+    return {
+      product_id: p.id,
+      product_name: (p.cleaned_name ?? p.original_name ?? 'Produto').trim() || 'Produto',
+      refined_category: p.refined_category,
+      price,
+      current_stock: stock,
+      total_revenue_90d,
+      total_quantity_90d,
+      days_since_last_sale,
+      avg_daily_sales,
+      status,
+      status_label,
+      capital_locked,
+      monthly_storage_cost,
+      forecast_trend,
+      forecast_next_90d_qty,
+      recommendation,
+      recommendation_type
+    }
+  })
+
+  // 9. Ordenar: dead primeiro, depois slow, depois healthy
+  // Dentro de cada grupo, ordenar por capital_locked DESC
+  const statusOrder = { dead: 0, slow: 1, healthy: 2 }
+  
+  deadStockMetrics.sort((a, b) => {
+    const statusDiff = statusOrder[a.status] - statusOrder[b.status]
+    if (statusDiff !== 0) return statusDiff
+    
+    const capitalA = a.capital_locked ?? 0
+    const capitalB = b.capital_locked ?? 0
+    return capitalB - capitalA
+  })
+
+  return deadStockMetrics
 }

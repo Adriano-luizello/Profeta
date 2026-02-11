@@ -81,4 +81,27 @@ export const TOOL_DEFINITIONS = [
       required: [] as string[],
     },
   },
+  {
+    name: 'get_dead_stock_analysis',
+    description:
+      'Análise de estoque parado e produtos de baixa performance: identifica produtos sem vendas ou com vendas muito baixas ' +
+      'nos últimos 90 dias, calcula capital preso em estoque, custo de oportunidade mensal, tendência de forecast, ' +
+      'e gera recomendações acionáveis (descontinuar, dar desconto, monitorar). Use quando o usuário perguntar sobre: ' +
+      'estoque parado, produtos parados, produtos que não vendem, capital preso, stop loss, produtos para descontinuar, ' +
+      'produtos para tirar do catálogo, custo de estoque, produtos lentos, slow movers, dead stock, onde está perdendo dinheiro com estoque.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        filter: {
+          type: 'string',
+          enum: ['all', 'dead', 'summary'],
+          description:
+            'Filtro da análise. "all": lista todos os produtos problemáticos com detalhes (default). ' +
+            '"dead": apenas produtos com zero vendas. ' +
+            '"summary": resumo executivo com totais e custos.',
+        },
+      },
+      required: [] as string[],
+    },
+  },
 ]
