@@ -9,7 +9,8 @@ import {
   getForecastsByDate,
   getDashboardKpis,
   getParetoMetrics,
-  getDeadStockMetrics
+  getDeadStockMetrics,
+  getTurnoverMetrics
 } from '@/lib/dashboard-data'
 import { getSupplyChainMetrics } from '@/lib/supply-chain'
 import { format } from 'date-fns'
@@ -376,6 +377,191 @@ async function deadStockTable(
   return { chartType: 'table', chartData: rows }
 }
 
+/**
+ * Gera dados para análise de turnover (velocidade de giro)
+ */
+async function turnoverTable(
+  supabase: SupabaseClient,
+  userId: string,
+  periodDays: number = 90,
+  view: string = 'products'
+): Promise<ChartOutput> {
+  const metrics = await getTurnoverMetrics(supabase, userId, periodDays)
+  
+  if (!metrics.length) {
+    return {
+      chartType: 'table',
+      chartData: [{
+        mensagem: `Sem dados de produtos para análise de turnover.`
+      }]
+    }
+  }
+  
+  // Verificar se tem dados de estoque
+  const hasStock = metrics.some(m => m.current_stock !== null)
+  
+  // View: products (default)
+  if (view === 'products') {
+    if (!hasStock) {
+      // Mensagem de alerta + tabela simplificada
+      const rows = metrics.slice(0, 20).map(m => ({
+        produto: m.product_name,
+        categoria: m.refined_category ?? '—',
+        vendas_dia: `${m.avg_daily_sales.toFixed(1)} un/dia`,
+        receita_periodo: formatBRL(m.total_revenue),
+        estoque_atual: '⚠️ Dado não disponível'
+      }))
+      
+      return {
+        chartType: 'table',
+        chartData: [
+          { 
+            aviso: '⚠️ Dados de estoque atual não disponíveis',
+            detalhes: 'O cálculo de turnover precisa do campo current_stock. Adicione essa informação no CSV ou integre com Shopify.'
+          },
+          ...rows
+        ]
+      }
+    }
+    
+    const rows = metrics.map(m => ({
+      produto: m.product_name,
+      categoria: m.refined_category ?? '—',
+      estoque: m.current_stock !== null ? `${m.current_stock} un` : '—',
+      vendas_dia: `${m.avg_daily_sales.toFixed(1)} un/dia`,
+      giro_dias: m.days_to_turn !== null ? `${m.days_to_turn} dias` : '—',
+      saude: m.turnover_label,
+      capital: m.capital_in_stock !== null ? formatBRL(m.capital_in_stock) : '—',
+      eficiencia: m.revenue_per_real_invested !== null 
+        ? `R$ ${m.revenue_per_real_invested.toFixed(2).replace('.', ',')}` 
+        : '—'
+    }))
+    
+    return { chartType: 'table', chartData: rows }
+  }
+  
+  // View: categories
+  if (view === 'categories') {
+    const categoryMap = new Map<string, {
+      count: number
+      totalDaysToTurn: number
+      countWithData: number
+      totalCapital: number
+      totalRevenue: number
+    }>()
+    
+    const grandTotalCapital = metrics.reduce((sum, m) => sum + (m.capital_in_stock ?? 0), 0)
+    const grandTotalRevenue = metrics.reduce((sum, m) => sum + m.total_revenue, 0)
+    
+    for (const m of metrics) {
+      const cat = m.refined_category ?? 'Sem categoria'
+      const current = categoryMap.get(cat) ?? {
+        count: 0,
+        totalDaysToTurn: 0,
+        countWithData: 0,
+        totalCapital: 0,
+        totalRevenue: 0
+      }
+      
+      categoryMap.set(cat, {
+        count: current.count + 1,
+        totalDaysToTurn: current.totalDaysToTurn + (m.days_to_turn ?? 0),
+        countWithData: current.countWithData + (m.days_to_turn !== null ? 1 : 0),
+        totalCapital: current.totalCapital + (m.capital_in_stock ?? 0),
+        totalRevenue: current.totalRevenue + m.total_revenue
+      })
+    }
+    
+    const rows = Array.from(categoryMap.entries())
+      .map(([category, data]) => {
+        const avgDaysToTurn = data.countWithData > 0 
+          ? Math.round(data.totalDaysToTurn / data.countWithData)
+          : null
+        
+        const capitalPct = grandTotalCapital > 0 
+          ? (data.totalCapital / grandTotalCapital) * 100 
+          : 0
+        
+        const revenuePct = grandTotalRevenue > 0 
+          ? (data.totalRevenue / grandTotalRevenue) * 100 
+          : 0
+        
+        let saude = '—'
+        if (avgDaysToTurn !== null) {
+          if (avgDaysToTurn <= 30) saude = '🟢 Excelente'
+          else if (avgDaysToTurn <= 60) saude = '🟡 Bom'
+          else if (avgDaysToTurn <= 120) saude = '🟠 Lento'
+          else saude = '🔴 Crítico'
+        }
+        
+        return {
+          categoria: category,
+          qtd_produtos: `${data.count} produtos`,
+          giro_medio: avgDaysToTurn !== null ? `${avgDaysToTurn} dias` : '—',
+          saude,
+          capital_total: formatBRL(data.totalCapital),
+          capital_pct: `${capitalPct.toFixed(1)}%`,
+          receita_pct: `${revenuePct.toFixed(1)}%`,
+          eficiencia_categoria: capitalPct > revenuePct * 1.5 
+            ? '⚠️ Ineficiente (muito capital, pouca receita)'
+            : capitalPct < revenuePct * 0.5
+              ? '⭐ Altamente eficiente'
+              : '✅ Balanceado'
+        }
+      })
+      .sort((a, b) => {
+        const daysA = parseInt(a.giro_medio) || 9999
+        const daysB = parseInt(b.giro_medio) || 9999
+        return daysA - daysB
+      })
+    
+    return { chartType: 'table', chartData: rows }
+  }
+  
+  // View: efficiency (ranking por ROI)
+  if (view === 'efficiency') {
+    const withEfficiency = metrics.filter(m => m.revenue_per_real_invested !== null)
+    
+    if (!withEfficiency.length) {
+      return {
+        chartType: 'table',
+        chartData: [{
+          mensagem: '⚠️ Sem dados de eficiência. É necessário ter preço e estoque atual para calcular.'
+        }]
+      }
+    }
+    
+    const sorted = [...withEfficiency].sort((a, b) => 
+      (b.revenue_per_real_invested ?? 0) - (a.revenue_per_real_invested ?? 0)
+    )
+    
+    const rows = sorted.map((m, index) => {
+      const efficiency = m.revenue_per_real_invested!
+      let eficienciaLabel = ''
+      
+      if (efficiency > 5) eficienciaLabel = '⭐ Altamente eficiente'
+      else if (efficiency > 2) eficienciaLabel = '✅ Eficiente'
+      else if (efficiency > 1) eficienciaLabel = '⚠️ Baixa eficiência'
+      else eficienciaLabel = '🔴 Capital não se paga'
+      
+      return {
+        rank: `#${index + 1}`,
+        produto: m.product_name,
+        receita: formatBRL(m.total_revenue),
+        capital: formatBRL(m.capital_in_stock ?? 0),
+        roi: `R$ ${efficiency.toFixed(2).replace('.', ',')}`,
+        giro_dias: m.days_to_turn !== null ? `${m.days_to_turn} dias` : '—',
+        avaliacao: eficienciaLabel
+      }
+    })
+    
+    return { chartType: 'table', chartData: rows }
+  }
+  
+  // View desconhecida, retornar products como fallback
+  return turnoverTable(supabase, userId, periodDays, 'products')
+}
+
 export type ChartQuery =
   | { type: 'forecast'; days?: number }
   | { type: 'line'; days?: number }
@@ -383,6 +569,7 @@ export type ChartQuery =
   | { type: 'alertas' }
   | { type: 'pareto'; period_days?: number; view?: string }
   | { type: 'dead_stock'; filter?: string }
+  | { type: 'turnover'; period_days?: number; view?: string }
 
 /**
  * Gera dados de gráfico conforme a query.
@@ -406,6 +593,8 @@ export async function generateChartData(
       return paretoTable(supabase, userId, query.period_days, query.view)
     case 'dead_stock':
       return deadStockTable(supabase, userId, query.filter)
+    case 'turnover':
+      return turnoverTable(supabase, userId, query.period_days, query.view)
     default:
       return null
   }

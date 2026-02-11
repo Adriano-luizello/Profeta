@@ -67,7 +67,7 @@ Tudo abaixo já está deployado e funcionando:
 
 ---
 
-## 🎯 P2 — EM ANDAMENTO (2 de 6 features completas)
+## 🎯 P2 — EM ANDAMENTO (3 de 6 features completas)
 
 ### ✅ P2 #9: Pareto 80/20 — COMPLETO e EM PRODUÇÃO (11/02/2026)
 
@@ -121,15 +121,60 @@ Tudo abaixo já está deployado e funcionando:
 
 **Commits:**
 - `cc6d48b` feat(analytics): implement dead stock and stop loss analysis
+- `b2386d9` docs: mark P2 #8 complete and add test guide
 
-**Testado localmente. Aguardando validação.**
+**Testado e validado em produção. Deploy: b2386d9**
+
+**Screenshots:**
+- Resumo executivo: 0 parados, 10 lentos, R$ 0 capital preso
+- Lista detalhada: 10 produtos lentos com recomendações específicas
+- Sistema funcionando perfeitamente ✅
+
+---
+
+### ✅ P2 #10: Velocidade de Giro (Turnover) — COMPLETO (11/02/2026)
+
+**Implementado:**
+- Tool `get_turnover_analysis` no AI Assistant
+- Cálculo de days to turn: current_stock / avg_daily_sales
+- Turnover rate: vezes que o estoque gira por ano (365 / days_to_turn)
+- Classificação de saúde: 🟢 Excelente (≤30d) | 🟡 Bom (≤60d) | 🟠 Lento (≤120d) | 🔴 Crítico (>120d)
+- Comparação com média da categoria: "2x mais rápido" | "Na média" | "3x mais lento"
+- Eficiência de capital: R$ X,XX de receita por R$ 1,00 investido em estoque
+
+**3 views disponíveis:**
+- `products`: Giro individual por produto com saúde e eficiência (default)
+- `categories`: Giro médio por categoria + % capital vs % receita (insight de ineficiência)
+- `efficiency`: Ranking por ROI (receita/capital), identifica produtos com melhor retorno
+
+**Arquivos modificados:**
+- `lib/dashboard-data.ts` — Interface `TurnoverMetrics` + função `getTurnoverMetrics()`
+- `lib/analytics/chart-data-generator.ts` — Função `turnoverTable()` com 3 views
+- `lib/ai/tool-definitions.ts` — Tool definition com rich description
+- `app/api/chat/route.ts` — Handler integration
+
+**Caso especial tratado:**
+- Se `current_stock` for null (dados de teste), exibe mensagem clara e tabela simplificada
+- Sistema funciona automaticamente quando dados de estoque estiverem disponíveis
+
+**Fórmula simplificada:**
+- Usa turnover baseado em unidades (sem COGS, pois não temos custo)
+- Estoque médio = `current_stock` (proxy, sem histórico de snapshots)
+- Período padrão: 90 dias (configurável via `period_days`)
+
+**Testado com sucesso:**
+- Build passa sem erros TypeScript
+- 3 views funcionais e testadas
+- Edge cases tratados (estoque null, produtos sem vendas)
+
+**Aguardando commit e push.**
 
 ---
 
 ### Ordem de implementação (atualizada):
-1. ✅ **#9 Pareto 80/20** — COMPLETO
-2. ✅ **#8 Estoque parado + Stop Loss** — COMPLETO
-3. **#10 Velocidade de giro (Turnover)** ← PRÓXIMO (faz junto com #8/#9)
+1. ✅ **#9 Pareto 80/20** — COMPLETO e EM PRODUÇÃO
+2. ✅ **#8 Estoque parado + Stop Loss** — COMPLETO e EM PRODUÇÃO
+3. ✅ **#10 Velocidade de giro (Turnover)** — COMPLETO (aguardando deploy)
 4. **#11 Limite de payload** (quick win)
 5. **#12 Observabilidade** (antes de cobrar)
 6. **#7 Paralelizar XGBoost** (quando tiver clientes com catálogos grandes)

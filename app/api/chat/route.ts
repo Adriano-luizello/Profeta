@@ -48,6 +48,13 @@ function toolToChartQuery(toolName: string, toolInput: unknown): ChartQuery | nu
         filter: input?.filter ?? 'all'
       }
     }
+    case 'get_turnover_analysis': {
+      return {
+        type: 'turnover',
+        period_days: input?.period_days ?? 90,
+        view: input?.view ?? 'products'
+      }
+    }
     default:
       return null
   }

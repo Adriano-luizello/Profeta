@@ -270,6 +270,33 @@ export interface DeadStockMetrics {
   recommendation_type: 'discontinue' | 'discount' | 'monitor' | 'ok'
 }
 
+export interface TurnoverMetrics {
+  product_id: string
+  product_name: string
+  refined_category: string | null
+  price: number | null
+  current_stock: number | null
+  
+  // Vendas no período
+  total_quantity_sold: number        // Unidades vendidas no período
+  total_revenue: number              // Receita no período
+  avg_daily_sales: number            // Média diária de vendas (unidades)
+  
+  // Turnover
+  days_to_turn: number | null        // Dias para girar o estoque atual (null se stock é null)
+  turnover_rate: number | null       // Vezes que gira por ano (365 / days_to_turn)
+  turnover_health: 'excellent' | 'good' | 'slow' | 'critical' | null
+  turnover_label: string             // "🟢 Excelente (15d)" | "🟡 Bom (45d)" | "🟠 Lento (90d)" | "🔴 Crítico (180d+)"
+  
+  // Comparação com média
+  category_avg_days_to_turn: number | null  // Média de giro da categoria
+  vs_category_avg: string | null     // "2x mais rápido" | "3x mais lento" | "Na média"
+  
+  // Capital
+  capital_in_stock: number | null    // current_stock × price
+  revenue_per_real_invested: number | null  // receita / capital_in_stock (eficiência do capital)
+}
+
 /**
  * KPIs para dashboard: produtos em risco (recomendação de reposição) e stockouts evitados.
  * Usa a análise mais recente para evitar queries muito grandes.
@@ -853,4 +880,178 @@ export async function getDeadStockMetrics(
   })
 
   return deadStockMetrics
+}
+
+/**
+ * Análise de velocidade de giro (Inventory Turnover)
+ * Calcula quantos dias cada produto leva para girar seu estoque
+ */
+export async function getTurnoverMetrics(
+  supabase: SupabaseClient,
+  userId: string,
+  periodDays: number = 90
+): Promise<TurnoverMetrics[]> {
+  // 1. Buscar análise mais recente
+  const analysisId = await getLatestAnalysis(supabase, userId)
+  if (!analysisId) return []
+
+  // 2. Calcular data de corte
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - periodDays)
+  const cutoffDateStr = cutoffDate.toISOString().slice(0, 10)
+
+  // 3. Buscar produtos
+  const { data: products, error: productsError } = await supabase
+    .from('products')
+    .select('id, cleaned_name, original_name, refined_category, price, current_stock')
+    .eq('analysis_id', analysisId)
+    .limit(MAX_PRODUCTS_PER_QUERY)
+
+  if (productsError || !products?.length) {
+    if (productsError) console.error('[turnover] getTurnoverMetrics products:', productsError.message)
+    return []
+  }
+
+  const productIds = products.map(p => p.id)
+  const productMap = new Map(products.map(p => [p.id, p]))
+
+  // 4. Buscar sales_history do período
+  const { data: sales, error: salesError } = await supabase
+    .from('sales_history')
+    .select('product_id, quantity, revenue')
+    .in('product_id', productIds)
+    .gte('date', cutoffDateStr)
+
+  if (salesError) {
+    console.error('[turnover] getTurnoverMetrics sales_history:', salesError.message)
+  }
+
+  // 5. Agregar vendas por produto
+  const salesByProduct = new Map<string, { revenue: number; quantity: number }>()
+  
+  for (const sale of sales ?? []) {
+    const pid = sale.product_id
+    const current = salesByProduct.get(pid) ?? { revenue: 0, quantity: 0 }
+    const product = productMap.get(pid)
+    
+    const saleRevenue = sale.revenue != null 
+      ? Number(sale.revenue)
+      : (product?.price != null ? Number(sale.quantity) * Number(product.price) : 0)
+    
+    salesByProduct.set(pid, {
+      revenue: current.revenue + saleRevenue,
+      quantity: current.quantity + Number(sale.quantity)
+    })
+  }
+
+  // 6. Calcular métricas por produto
+  const turnoverMetrics = products.map(p => {
+    const salesData = salesByProduct.get(p.id) ?? { revenue: 0, quantity: 0 }
+    
+    const price = p.price != null ? Number(p.price) : null
+    const stock = p.current_stock != null ? Number(p.current_stock) : null
+    
+    const total_quantity_sold = salesData.quantity
+    const total_revenue = salesData.revenue
+    const avg_daily_sales = total_quantity_sold / periodDays
+    
+    // Calcular turnover
+    let days_to_turn: number | null = null
+    let turnover_rate: number | null = null
+    let turnover_health: TurnoverMetrics['turnover_health'] = null
+    let turnover_label = '—'
+    
+    if (stock != null && stock > 0 && avg_daily_sales > 0) {
+      days_to_turn = Math.round(stock / avg_daily_sales)
+      turnover_rate = Math.round((365 / days_to_turn) * 10) / 10
+      
+      // Classificar saúde
+      if (days_to_turn <= 30) {
+        turnover_health = 'excellent'
+        turnover_label = `🟢 Excelente (${days_to_turn}d)`
+      } else if (days_to_turn <= 60) {
+        turnover_health = 'good'
+        turnover_label = `🟡 Bom (${days_to_turn}d)`
+      } else if (days_to_turn <= 120) {
+        turnover_health = 'slow'
+        turnover_label = `🟠 Lento (${days_to_turn}d)`
+      } else {
+        turnover_health = 'critical'
+        turnover_label = `🔴 Crítico (${days_to_turn}d+)`
+      }
+    }
+    
+    // Calcular capital
+    const capital_in_stock = stock != null && price != null ? stock * price : null
+    const revenue_per_real_invested = capital_in_stock != null && capital_in_stock > 0 
+      ? total_revenue / capital_in_stock 
+      : null
+    
+    return {
+      product_id: p.id,
+      product_name: (p.cleaned_name ?? p.original_name ?? 'Produto').trim() || 'Produto',
+      refined_category: p.refined_category,
+      price,
+      current_stock: stock,
+      total_quantity_sold,
+      total_revenue,
+      avg_daily_sales,
+      days_to_turn,
+      turnover_rate,
+      turnover_health,
+      turnover_label,
+      category_avg_days_to_turn: null as number | null,  // calculado depois
+      vs_category_avg: null as string | null,            // calculado depois
+      capital_in_stock,
+      revenue_per_real_invested
+    }
+  })
+
+  // 7. Calcular média por categoria
+  const categoryMap = new Map<string, number[]>()
+  
+  for (const m of turnoverMetrics) {
+    if (m.days_to_turn !== null) {
+      const cat = m.refined_category ?? 'Sem categoria'
+      const current = categoryMap.get(cat) ?? []
+      current.push(m.days_to_turn)
+      categoryMap.set(cat, current)
+    }
+  }
+  
+  const categoryAvg = new Map<string, number>()
+  for (const [cat, days] of categoryMap.entries()) {
+    const avg = days.reduce((sum, d) => sum + d, 0) / days.length
+    categoryAvg.set(cat, Math.round(avg))
+  }
+  
+  // 8. Comparar cada produto com a média da categoria
+  for (const m of turnoverMetrics) {
+    const cat = m.refined_category ?? 'Sem categoria'
+    const catAvg = categoryAvg.get(cat)
+    
+    if (catAvg !== undefined && m.days_to_turn !== null) {
+      m.category_avg_days_to_turn = catAvg
+      
+      if (m.days_to_turn < catAvg * 0.5) {
+        const factor = Math.round((catAvg / m.days_to_turn) * 10) / 10
+        m.vs_category_avg = `${factor}x mais rápido que a categoria`
+      } else if (m.days_to_turn > catAvg * 1.5) {
+        const factor = Math.round((m.days_to_turn / catAvg) * 10) / 10
+        m.vs_category_avg = `${factor}x mais lento que a categoria`
+      } else {
+        m.vs_category_avg = 'Na média da categoria'
+      }
+    }
+  }
+
+  // 9. Ordenar por days_to_turn ASC (mais rápido primeiro), null no final
+  turnoverMetrics.sort((a, b) => {
+    if (a.days_to_turn === null && b.days_to_turn === null) return 0
+    if (a.days_to_turn === null) return 1
+    if (b.days_to_turn === null) return -1
+    return a.days_to_turn - b.days_to_turn
+  })
+
+  return turnoverMetrics
 }

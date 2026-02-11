@@ -104,4 +104,31 @@ export const TOOL_DEFINITIONS = [
       required: [] as string[],
     },
   },
+  {
+    name: 'get_turnover_analysis',
+    description:
+      'Análise de velocidade de giro do estoque (Inventory Turnover): calcula quantos dias cada produto/categoria leva para girar ' +
+      'seu estoque, eficiência de capital investido (receita por real em estoque), e compara com a média da categoria. ' +
+      'Use quando o usuário perguntar sobre: velocidade de giro, inventory turnover, quanto tempo leva para vender o estoque, ' +
+      'eficiência do estoque, capital investido em estoque, quais categorias giram mais rápido, produtos com giro lento, ' +
+      'otimização de estoque, ou ROI do estoque.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        period_days: {
+          type: 'number',
+          description: 'Período de análise em dias para calcular vendas médias. Default: 90.',
+        },
+        view: {
+          type: 'string',
+          enum: ['products', 'categories', 'efficiency'],
+          description:
+            'Visão da análise. "products": giro por produto individual (default). ' +
+            '"categories": giro médio por categoria com % capital vs % receita. ' +
+            '"efficiency": ranking de produtos por receita gerada por real investido em estoque.',
+        },
+      },
+      required: [] as string[],
+    },
+  },
 ]
