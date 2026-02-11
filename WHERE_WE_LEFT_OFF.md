@@ -67,7 +67,7 @@ Tudo abaixo já está deployado e funcionando:
 
 ---
 
-## 🎯 P2 — EM ANDAMENTO (4 de 6 features completas)
+## 🎯 P2 — EM ANDAMENTO (5 de 6 features completas)
 
 ### ✅ P2 #9: Pareto 80/20 — COMPLETO e EM PRODUÇÃO (11/02/2026)
 
@@ -198,6 +198,55 @@ Tudo abaixo já está deployado e funcionando:
 - 3 camadas de validação implementadas
 - Mensagens de erro e warning funcionais
 
+**Testado e deployado em produção.**
+
+---
+
+### ✅ P2 #12: Observabilidade e Logging de Custos — COMPLETO (11/02/2026)
+
+**Implementado:**
+- Migration 020: Tabela `usage_logs` com RLS
+- Tracking de consumo de Claude (chat) e GPT-4 (limpeza de dados)
+- Fire-and-forget logging (nunca bloqueia fluxo principal)
+- Cálculo automático de custos em centavos de USD
+- Função `getUserUsageSummary()` para análise de consumo
+
+**Pontos instrumentados:**
+1. **Claude Chat**: Logging após cada mensagem (incluindo tool calls)
+   - Metadata: `initial_call`, `tool_used`, `has_chart`
+2. **GPT-4 Cleaning**: Logging após limpeza completa
+   - Metadata: `product_count`, `processing_time_ms`, qualidade dos dados
+
+**Estrutura da tabela:**
+- `user_id`, `service`, `analysis_id`
+- `input_tokens`, `output_tokens`, `total_tokens` (gerado)
+- `estimated_cost_cents` (custo em centavos de USD)
+- `model`, `metadata`, `created_at`
+- 3 índices (user+date, service, analysis_id)
+- RLS: usuário vê apenas seus logs, service role pode inserir
+
+**Custos por modelo:**
+- Claude 3.5 Sonnet: $3/$15 per M tokens
+- GPT-4o-mini: $0.15/$0.60 per M tokens
+
+**Arquivos criados:**
+- `supabase/migrations/020_usage_logs.sql` — Nova tabela
+- `lib/usage-logger.ts` — Helper de logging + resumo
+
+**Arquivos modificados:**
+- `app/api/chat/route.ts` — 2 pontos de logging (chamada inicial + tool calls)
+- `lib/services/run-clean.ts` — 1 ponto de logging (após limpeza)
+
+**Objetivo:**
+- Calcular custo real por usuário antes de definir pricing
+- Base para análise de viabilidade econômica do produto
+- Dados para dashboard de consumo (futuro)
+
+**Testado com sucesso:**
+- Build passa sem erros
+- Migration aplicada no Supabase
+- Logging não bloqueia fluxo (fire and forget)
+
 **Aguardando teste manual e push.**
 
 ---
@@ -206,8 +255,8 @@ Tudo abaixo já está deployado e funcionando:
 1. ✅ **#9 Pareto 80/20** — COMPLETO e EM PRODUÇÃO
 2. ✅ **#8 Estoque parado + Stop Loss** — COMPLETO e EM PRODUÇÃO
 3. ✅ **#10 Velocidade de giro (Turnover)** — COMPLETO e EM PRODUÇÃO
-4. ✅ **#11 Limite de payload** — COMPLETO (aguardando teste e deploy)
-5. **#12 Observabilidade** (antes de cobrar)
+4. ✅ **#11 Limite de payload** — COMPLETO e EM PRODUÇÃO
+5. ✅ **#12 Observabilidade** — COMPLETO (aguardando teste e deploy)
 6. **#7 Paralelizar XGBoost** (quando tiver clientes com catálogos grandes)
 
 ### O que o Pareto 80/20 precisa fazer:

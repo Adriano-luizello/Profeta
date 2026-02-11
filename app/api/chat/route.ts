@@ -9,6 +9,7 @@ import {
 import { CLAUDE_CONFIG, SYSTEM_PROMPT } from '@/lib/ai/claude-config'
 import { TOOL_DEFINITIONS } from '@/lib/ai/tool-definitions'
 import { checkRateLimit, recordTokenUsage } from '@/lib/rate-limit'
+import { logUsage } from '@/lib/usage-logger'
 
 const anthropic = new Anthropic({
   apiKey: CLAUDE_CONFIG.apiKey,
@@ -140,6 +141,18 @@ export async function POST(request: Request) {
       messages,
     })
 
+    // Log de uso (fire and forget — não bloqueia resposta ao usuário)
+    logUsage(supabase, {
+      userId: user.id,
+      service: 'claude_chat',
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      model: response.model,
+      metadata: {
+        initial_call: true,
+      }
+    }).catch(() => {})  // Silenciar erros — logging nunca bloqueia
+
     let chartOutput: ChartOutput | null = null
 
     while (response.stop_reason === 'tool_use') {
@@ -189,6 +202,19 @@ export async function POST(request: Request) {
         tools: TOOL_DEFINITIONS,
         messages,
       })
+
+      // Log de uso após tool call (fire and forget)
+      logUsage(supabase, {
+        userId: user.id,
+        service: 'claude_chat',
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        model: response.model,
+        metadata: {
+          tool_used: toolUse?.name || null,
+          has_chart: !!chartOutput,
+        }
+      }).catch(() => {})  // Silenciar erros
     }
 
     const textBlock = response.content.find(

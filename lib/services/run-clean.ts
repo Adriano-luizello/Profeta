@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { cleanProducts, calculateCleaningStats } from '@/lib/services/data-cleaner'
 import { updatePipelineStatus } from '@/lib/services/update-pipeline-status'
+import { logUsage } from '@/lib/usage-logger'
 
 export interface RunCleanResult {
   success: boolean
@@ -65,6 +66,29 @@ export async function runClean(
     const stats = calculateCleaningStats(results)
 
     console.log(`[Clean] Total: ${cleanMs}ms | ${productsWithHistory.length} produtos | Custo: $${stats.total_cost_usd.toFixed(4)}`)
+    
+    // Log de uso de GPT-4 (fire and forget — não bloqueia)
+    // Agregar todos os produtos limpos em um único log por batch
+    const totalInputTokens = results.reduce((sum, r) => sum + (r.tokens_used?.input || 0), 0)
+    const totalOutputTokens = results.reduce((sum, r) => sum + (r.tokens_used?.output || 0), 0)
+    
+    if (totalInputTokens > 0 || totalOutputTokens > 0) {
+      logUsage(supabase, {
+        userId: userId,
+        service: 'gpt4_cleaning',
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        model: 'gpt-4o-mini',  // Modelo usado no cleaning (CLEANING_CONFIG.model)
+        analysisId: analysisId,
+        metadata: {
+          product_count: productsWithHistory.length,
+          processing_time_ms: cleanMs,
+          high_quality: stats.high_quality,
+          medium_quality: stats.medium_quality,
+          low_quality: stats.low_quality,
+        }
+      }).catch(() => {})  // Silenciar erros — logging nunca bloqueia
+    }
     
     const processingTime = cleanMs
 
