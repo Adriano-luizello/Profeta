@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getSupplyChainMetrics } from '@/lib/supply-chain'
+import { getSupplyChainMetrics, type SupplyChainMetrics } from '@/lib/supply-chain'
 
 export interface SalesPoint {
   date: string
@@ -219,6 +219,25 @@ export interface DashboardKpis {
   alertas: AlertaReordenamento[]
   /** IDs de recomendações já marcadas como "pedido feito" pelo usuário. */
   markedRecommendationIds: string[]
+}
+
+export interface ParetoMetrics {
+  product_id: string
+  product_name: string
+  refined_category: string | null
+  total_revenue: number          // Receita total no período
+  total_quantity: number          // Unidades vendidas no período
+  contribution_pct: number        // % do total de receita (ex: 15.3)
+  cumulative_pct: number          // % acumulado (ex: 45.2)
+  rank: number                    // Posição no ranking (1 = maior receita)
+  is_top_20: boolean              // true se está nos top 20% de produtos
+  is_top_80_revenue: boolean      // true se contribui para os primeiros 80% de receita
+  current_stock: number | null
+  price: number | null
+  capital_in_stock: number | null // current_stock × price
+  // Cruzamento supply chain
+  urgency_level: 'critical' | 'attention' | 'informative' | 'ok' | null
+  days_until_stockout: number | null
 }
 
 /**
@@ -469,4 +488,132 @@ export async function getDashboardKpis(
     alertas,
     markedRecommendationIds: Array.from(markedSet)
   }
+}
+
+/**
+ * Análise Pareto 80/20: ranking de produtos por receita
+ * Calcula contribuição percentual, identifica top 20%, e cruza com supply chain
+ */
+export async function getParetoMetrics(
+  supabase: SupabaseClient,
+  userId: string,
+  periodDays: number = 90
+): Promise<ParetoMetrics[]> {
+  // 1. Buscar análise mais recente
+  const analysisId = await getLatestAnalysis(supabase, userId)
+  if (!analysisId) return []
+
+  // 2. Calcular data de corte
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - periodDays)
+  const cutoffDateStr = cutoffDate.toISOString().slice(0, 10)
+
+  // 3. Buscar todos os produtos da análise
+  const { data: products, error: productsError } = await supabase
+    .from('products')
+    .select('id, cleaned_name, original_name, refined_category, price, current_stock')
+    .eq('analysis_id', analysisId)
+    .limit(MAX_PRODUCTS_PER_QUERY)
+
+  if (productsError || !products?.length) {
+    if (productsError) console.error('[pareto] getParetoMetrics products:', productsError.message)
+    return []
+  }
+
+  const productIds = products.map(p => p.id)
+  const productMap = new Map(products.map(p => [p.id, p]))
+
+  // 4. Buscar sales_history do período
+  const { data: sales, error: salesError } = await supabase
+    .from('sales_history')
+    .select('product_id, quantity, revenue')
+    .in('product_id', productIds)
+    .gte('date', cutoffDateStr)
+
+  if (salesError) {
+    console.error('[pareto] getParetoMetrics sales_history:', salesError.message)
+    return []
+  }
+
+  // 5. Agregar vendas por produto (em memória)
+  const revenueByProduct = new Map<string, { revenue: number; quantity: number }>()
+  
+  for (const sale of sales ?? []) {
+    const pid = sale.product_id
+    const current = revenueByProduct.get(pid) ?? { revenue: 0, quantity: 0 }
+    
+    // Usar revenue se disponível, senão calcular quantity × price
+    const product = productMap.get(pid)
+    const saleRevenue = sale.revenue != null 
+      ? Number(sale.revenue)
+      : (product?.price != null ? Number(sale.quantity) * Number(product.price) : 0)
+    
+    revenueByProduct.set(pid, {
+      revenue: current.revenue + saleRevenue,
+      quantity: current.quantity + Number(sale.quantity)
+    })
+  }
+
+  // 6. Criar array com todos os produtos (incluindo sem vendas)
+  const productMetrics = products.map(p => {
+    const sales = revenueByProduct.get(p.id) ?? { revenue: 0, quantity: 0 }
+    const price = p.price != null ? Number(p.price) : null
+    const stock = p.current_stock != null ? Number(p.current_stock) : null
+    const capitalInStock = stock != null && price != null ? stock * price : null
+    
+    return {
+      product_id: p.id,
+      product_name: (p.cleaned_name ?? p.original_name ?? 'Produto').trim() || 'Produto',
+      refined_category: p.refined_category,
+      total_revenue: sales.revenue,
+      total_quantity: sales.quantity,
+      current_stock: stock,
+      price: price,
+      capital_in_stock: capitalInStock,
+      contribution_pct: 0,  // calculado depois
+      cumulative_pct: 0,    // calculado depois
+      rank: 0,              // calculado depois
+      is_top_20: false,     // calculado depois
+      is_top_80_revenue: false,  // calculado depois
+      urgency_level: null as ParetoMetrics['urgency_level'],
+      days_until_stockout: null
+    }
+  })
+
+  // 7. Ordenar por receita DESC
+  productMetrics.sort((a, b) => b.total_revenue - a.total_revenue)
+
+  // 8. Calcular métricas percentuais
+  const grandTotal = productMetrics.reduce((sum, p) => sum + p.total_revenue, 0)
+  const totalProducts = productMetrics.length
+  const top20Count = Math.ceil(totalProducts * 0.2)
+  
+  let cumulativeRevenue = 0
+  productMetrics.forEach((p, index) => {
+    p.rank = index + 1
+    p.contribution_pct = grandTotal > 0 ? (p.total_revenue / grandTotal) * 100 : 0
+    cumulativeRevenue += p.total_revenue
+    p.cumulative_pct = grandTotal > 0 ? (cumulativeRevenue / grandTotal) * 100 : 0
+    p.is_top_20 = p.rank <= top20Count
+    p.is_top_80_revenue = p.cumulative_pct <= 80
+  })
+
+  // 9. Cruzar com supply chain metrics
+  try {
+    const supplyChainMetrics = await getSupplyChainMetrics(supabase, userId)
+    const scMap = new Map(supplyChainMetrics.map(sc => [sc.product_id, sc]))
+    
+    productMetrics.forEach(p => {
+      const sc = scMap.get(p.product_id)
+      if (sc) {
+        p.urgency_level = sc.urgency_level
+        p.days_until_stockout = sc.days_until_stockout
+      }
+    })
+  } catch (error) {
+    console.error('[pareto] Erro ao cruzar com supply chain:', error)
+    // Continuar sem supply chain data
+  }
+
+  return productMetrics
 }

@@ -54,4 +54,31 @@ export const TOOL_DEFINITIONS = [
       required: [] as string[],
     },
   },
+  {
+    name: 'get_pareto_analysis',
+    description:
+      'Análise Pareto 80/20 de rentabilidade: ranking de produtos por receita, contribuição percentual, ' +
+      'identificação dos top 20% que geram 80% da receita, cruzamento com supply chain (top sellers em risco de ruptura), ' +
+      'e análise por categoria. Use quando o usuário perguntar sobre: produtos mais vendidos, ranking de vendas, ' +
+      'quais produtos são mais importantes, análise 80/20, concentração de receita, top performers, quais produtos priorizar, ' +
+      'receita por produto, receita por categoria, produtos mais lucrativos, best sellers.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        period_days: {
+          type: 'number',
+          description: 'Período de análise em dias. Default: 90. Opções comuns: 30, 60, 90, 180, 365.',
+        },
+        view: {
+          type: 'string',
+          enum: ['products', 'categories', 'at_risk'],
+          description:
+            'Visão da análise. "products": ranking completo de todos os produtos por receita (default). ' +
+            '"categories": receita agrupada por categoria. ' +
+            '"at_risk": apenas top sellers com risco de ruptura no supply chain.',
+        },
+      },
+      required: [] as string[],
+    },
+  },
 ]

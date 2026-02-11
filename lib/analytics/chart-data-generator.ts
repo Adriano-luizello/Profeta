@@ -7,7 +7,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   getSalesByDate,
   getForecastsByDate,
-  getDashboardKpis
+  getDashboardKpis,
+  getParetoMetrics
 } from '@/lib/dashboard-data'
 import { getSupplyChainMetrics } from '@/lib/supply-chain'
 import { format } from 'date-fns'
@@ -145,11 +146,125 @@ async function alertasTable(
   return { chartType: 'table', chartData: rows }
 }
 
+/**
+ * Formata valor monetário em Real brasileiro
+ */
+function formatBRL(value: number): string {
+  try {
+    return `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  } catch {
+    // Fallback se toLocaleString não funcionar
+    return `R$ ${value.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`
+  }
+}
+
+/**
+ * Gera dados para análise Pareto 80/20
+ */
+async function paretoTable(
+  supabase: SupabaseClient,
+  userId: string,
+  periodDays: number = 90,
+  view: string = 'products'
+): Promise<ChartOutput> {
+  const metrics = await getParetoMetrics(supabase, userId, periodDays)
+  
+  if (!metrics.length) {
+    return {
+      chartType: 'table',
+      chartData: [{
+        mensagem: `Sem dados de vendas para os últimos ${periodDays} dias.`
+      }]
+    }
+  }
+  
+  // View: products (ranking completo)
+  if (view === 'products') {
+    const rows = metrics.map(m => ({
+      rank: `#${m.rank}`,
+      produto: m.product_name,
+      categoria: m.refined_category ?? '—',
+      receita: formatBRL(m.total_revenue),
+      contribuicao: `${m.contribution_pct.toFixed(1)}%`,
+      acumulado: `${m.cumulative_pct.toFixed(1)}%`,
+      top_20: m.is_top_20 ? '⭐ Top 20%' : '—',
+      urgencia: formatUrgency(m.urgency_level)
+    }))
+    return { chartType: 'table', chartData: rows }
+  }
+  
+  // View: categories (agrupado por categoria)
+  if (view === 'categories') {
+    const categoryMap = new Map<string, { revenue: number; count: number }>()
+    const grandTotal = metrics.reduce((sum, m) => sum + m.total_revenue, 0)
+    
+    for (const m of metrics) {
+      const cat = m.refined_category ?? 'Sem categoria'
+      const current = categoryMap.get(cat) ?? { revenue: 0, count: 0 }
+      categoryMap.set(cat, {
+        revenue: current.revenue + m.total_revenue,
+        count: current.count + 1
+      })
+    }
+    
+    const rows = Array.from(categoryMap.entries())
+      .map(([category, data]) => ({
+        categoria: category,
+        receita_total: formatBRL(data.revenue),
+        percentual: `${((data.revenue / grandTotal) * 100).toFixed(1)}%`,
+        qtd_produtos: `${data.count} produtos`,
+        receita_media: formatBRL(data.revenue / data.count)
+      }))
+      .sort((a, b) => {
+        const revA = parseFloat(a.receita_total.replace(/[^\d,]/g, '').replace(',', '.'))
+        const revB = parseFloat(b.receita_total.replace(/[^\d,]/g, '').replace(',', '.'))
+        return revB - revA
+      })
+    
+    return { chartType: 'table', chartData: rows }
+  }
+  
+  // View: at_risk (top sellers em risco)
+  if (view === 'at_risk') {
+    const atRisk = metrics.filter(m => 
+      m.is_top_80_revenue && 
+      (m.urgency_level === 'critical' || m.urgency_level === 'attention')
+    )
+    
+    if (!atRisk.length) {
+      return {
+        chartType: 'table',
+        chartData: [{
+          mensagem: '✅ Nenhum top seller em risco. Supply chain saudável.'
+        }]
+      }
+    }
+    
+    const rows = atRisk.map(m => ({
+      rank: `#${m.rank}`,
+      produto: m.product_name,
+      receita: formatBRL(m.total_revenue),
+      contribuicao: `${m.contribution_pct.toFixed(1)}%`,
+      urgencia: formatUrgency(m.urgency_level),
+      dias_ruptura: m.days_until_stockout != null ? `${m.days_until_stockout} dias` : '—',
+      acao: m.urgency_level === 'critical' 
+        ? '⚠️ Pedir HOJE — ruptura iminente'
+        : '📋 Incluir no próximo pedido'
+    }))
+    
+    return { chartType: 'table', chartData: rows }
+  }
+  
+  // View desconhecida, retornar products como fallback
+  return paretoTable(supabase, userId, periodDays, 'products')
+}
+
 export type ChartQuery =
   | { type: 'forecast'; days?: number }
   | { type: 'line'; days?: number }
   | { type: 'supply_chain'; urgency_filter?: string }
   | { type: 'alertas' }
+  | { type: 'pareto'; period_days?: number; view?: string }
 
 /**
  * Gera dados de gráfico conforme a query.
@@ -169,6 +284,8 @@ export async function generateChartData(
       return supplyChainTable(supabase, userId, query.urgency_filter)
     case 'alertas':
       return alertasTable(supabase, userId)
+    case 'pareto':
+      return paretoTable(supabase, userId, query.period_days, query.view)
     default:
       return null
   }
