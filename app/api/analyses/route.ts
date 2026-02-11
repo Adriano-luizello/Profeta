@@ -1,9 +1,24 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { CSVRow } from '@/types/csv'
+import { UPLOAD_LIMITS } from '@/lib/upload-limits'
 
 export async function POST(request: Request) {
   try {
+    // Validação 1: Content-Length (antes de ler o body)
+    const contentLength = parseInt(request.headers.get('content-length') || '0')
+    if (contentLength > UPLOAD_LIMITS.MAX_FILE_SIZE_BYTES) {
+      return NextResponse.json(
+        {
+          error: 'PAYLOAD_TOO_LARGE',
+          message: `Arquivo excede o limite de ${UPLOAD_LIMITS.MAX_FILE_SIZE_MB} MB. ` +
+            `Reduza o tamanho do arquivo ou divida em partes menores.`,
+          max_size_mb: UPLOAD_LIMITS.MAX_FILE_SIZE_MB
+        },
+        { status: 413 }
+      )
+    }
+
     const supabase = await createClient()
 
     // Check authentication
@@ -29,10 +44,24 @@ export async function POST(request: Request) {
       csvData: CSVRow[]
     }
 
+    // Validação 2: Dados obrigatórios
     if (!fileName || !csvData || csvData.length === 0) {
       return NextResponse.json(
         { error: 'Dados inválidos' },
         { status: 400 }
+      )
+    }
+
+    // Validação 3: Verificar tamanho estimado do payload (double-check)
+    const bodySize = JSON.stringify(body).length
+    if (bodySize > UPLOAD_LIMITS.MAX_FILE_SIZE_BYTES) {
+      return NextResponse.json(
+        {
+          error: 'PAYLOAD_TOO_LARGE',
+          message: `Dados excedem o limite de ${UPLOAD_LIMITS.MAX_FILE_SIZE_MB} MB.`,
+          max_size_mb: UPLOAD_LIMITS.MAX_FILE_SIZE_MB
+        },
+        { status: 413 }
       )
     }
 

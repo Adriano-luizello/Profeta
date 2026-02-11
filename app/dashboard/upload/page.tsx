@@ -22,6 +22,7 @@ import {
   ArrowRight,
   Info,
 } from 'lucide-react'
+import { UPLOAD_LIMITS, formatFileSize, estimateProducts } from '@/lib/upload-limits'
 
 type Step =
   | 'upload'
@@ -79,27 +80,61 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [savingProductCount, setSavingProductCount] = useState<number>(0)
+  const [warningMessage, setWarningMessage] = useState<string | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFileUpload = (uploadedFile: File) => {
     setFile(uploadedFile)
     setError(null)
+    setWarningMessage(null)
+
+    // Validação 1: HARD LIMIT - Tamanho máximo
+    if (uploadedFile.size > UPLOAD_LIMITS.MAX_FILE_SIZE_BYTES) {
+      setError(
+        `Arquivo muito grande (${formatFileSize(uploadedFile.size)}). ` +
+        `Máximo permitido: ${UPLOAD_LIMITS.MAX_FILE_SIZE_MB} MB. ` +
+        `Reduza o tamanho do arquivo ou divida em partes menores.`
+      )
+      setStep('upload')
+      setUploadProgress(0)
+      return
+    }
+
+    // Validação 2: Tipo de arquivo
+    const hasValidExtension = UPLOAD_LIMITS.ALLOWED_EXTENSIONS.some(ext => 
+      uploadedFile.name.toLowerCase().endsWith(ext.toLowerCase())
+    )
+    if (!hasValidExtension) {
+      setError(
+        `Formato inválido. Envie um arquivo .csv ` +
+        `(arquivo atual: ${uploadedFile.name})`
+      )
+      setStep('upload')
+      setUploadProgress(0)
+      return
+    }
+
+    // Validação 3: WARNING - Arquivo grande (deixa continuar)
+    if (uploadedFile.size > UPLOAD_LIMITS.WARNING_FILE_SIZE_BYTES) {
+      const sizeStr = formatFileSize(uploadedFile.size)
+      setWarningMessage(
+        `⚠️ Arquivo grande (${sizeStr}). ` +
+        `O processamento pode levar alguns minutos. Deseja continuar?`
+      )
+      setPendingFile(uploadedFile)
+      return
+    }
+
+    // Prosseguir com processamento
+    processFile(uploadedFile)
+  }
+
+  const processFile = (uploadedFile: File) => {
     setStep('detecting')
     setUploadProgress(20)
-
-    if (uploadedFile.size > 10 * 1024 * 1024) {
-      setError('Arquivo muito grande. Máximo: 10MB')
-      setStep('upload')
-      setUploadProgress(0)
-      return
-    }
-
-    if (!uploadedFile.name.endsWith('.csv')) {
-      setError('Arquivo deve ser .csv')
-      setStep('upload')
-      setUploadProgress(0)
-      return
-    }
+    setWarningMessage(null)
+    setPendingFile(null)
 
     Papa.parse(uploadedFile, {
       header: true,
@@ -143,6 +178,22 @@ export default function UploadPage() {
             setError('CSV não possui cabeçalhos')
             setStep('upload')
             setUploadProgress(0)
+            return
+          }
+
+          // Validação 4: WARNING - Muitas linhas (deixa continuar)
+          const lineCount = data.length
+          if (lineCount > UPLOAD_LIMITS.WARNING_ROWS) {
+            const estimatedProducts = estimateProducts(lineCount)
+            setWarningMessage(
+              `⚠️ Arquivo com ${lineCount.toLocaleString('pt-BR')} linhas ` +
+              `(~${estimatedProducts} produtos estimados). ` +
+              `O processamento pode demorar. Deseja continuar?`
+            )
+            setPendingFile(uploadedFile)
+            setParsedData(data)
+            setHeaders(hdrs)
+            setStep('upload')
             return
           }
 
@@ -279,6 +330,16 @@ export default function UploadPage() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
+        
+        // Tratamento específico para erro 413 (Payload Too Large)
+        if (response.status === 413) {
+          throw new Error(
+            errorData.message || 
+            `Arquivo excede o limite de ${UPLOAD_LIMITS.MAX_FILE_SIZE_MB} MB. ` +
+            `Reduza o tamanho do arquivo ou divida em partes menores.`
+          )
+        }
+        
         throw new Error(errorData.error || 'Erro ao salvar dados')
       }
 
@@ -343,6 +404,68 @@ export default function UploadPage() {
         </Alert>
       )}
 
+      {warningMessage && pendingFile && (
+        <Alert>
+          <AlertTriangle className="h-5 w-5 text-yellow-600" />
+          <AlertTitle className="text-lg">Atenção</AlertTitle>
+          <AlertDescription className="space-y-4">
+            <p>{warningMessage}</p>
+            <div className="text-sm text-muted-foreground space-y-1">
+              <p>📁 <strong>Arquivo:</strong> {pendingFile.name}</p>
+              <p>📊 <strong>Tamanho:</strong> {formatFileSize(pendingFile.size)}</p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Button
+                onClick={() => {
+                  if (parsedData.length > 0 && headers.length > 0) {
+                    // Já foi parseado (warning de linhas), continuar processamento
+                    setWarningMessage(null)
+                    setPendingFile(null)
+                    setUploadProgress(40)
+                    const detected = detectCSVFormat(headers, parsedData.slice(0, 10))
+                    setFormat(detected)
+                    setUploadProgress(60)
+                    if (detected.type === 'wide') {
+                      handleUnpivot(parsedData, detected, headers)
+                    } else if (detected.type === 'long') {
+                      setStep('map')
+                      setUploadProgress(80)
+                    } else {
+                      setError(
+                        'Formato de CSV não reconhecido. ' +
+                          'O arquivo deve ter colunas de data ou estar em formato mensal (YYYY-MM).'
+                      )
+                      setStep('upload')
+                      setUploadProgress(0)
+                    }
+                  } else {
+                    // Ainda não parseou (warning de tamanho), processar agora
+                    processFile(pendingFile)
+                  }
+                }}
+                className="flex-1"
+              >
+                Continuar
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setWarningMessage(null)
+                  setPendingFile(null)
+                  setFile(null)
+                  setParsedData([])
+                  setHeaders([])
+                  setStep('upload')
+                  setUploadProgress(0)
+                }}
+              >
+                Cancelar
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {step === 'upload' && (
         <Card>
           <CardContent className="pt-6">
@@ -380,7 +503,7 @@ export default function UploadPage() {
                 Selecionar Arquivo CSV
               </span>
               <p className="text-xs text-muted-foreground mt-4">
-                Tamanho máximo: 10MB
+                Tamanho máximo: {UPLOAD_LIMITS.MAX_FILE_SIZE_MB} MB
               </p>
             </label>
           </CardContent>

@@ -67,7 +67,7 @@ Tudo abaixo já está deployado e funcionando:
 
 ---
 
-## 🎯 P2 — EM ANDAMENTO (3 de 6 features completas)
+## 🎯 P2 — EM ANDAMENTO (4 de 6 features completas)
 
 ### ✅ P2 #9: Pareto 80/20 — COMPLETO e EM PRODUÇÃO (11/02/2026)
 
@@ -167,15 +167,46 @@ Tudo abaixo já está deployado e funcionando:
 - 3 views funcionais e testadas
 - Edge cases tratados (estoque null, produtos sem vendas)
 
-**Aguardando commit e push.**
+**Testado e deployado em produção.**
+
+---
+
+### ✅ P2 #11: Limite de Payload no Upload — COMPLETO (11/02/2026)
+
+**Implementado:**
+- Validação em 3 camadas: frontend (pre-upload), frontend (erro 413), backend (API)
+- Hard limit: 50 MB (bloqueia upload)
+- Warning limit: 10 MB (avisa, deixa continuar)
+- Warning: > 50.000 linhas (avisa, deixa continuar)
+- Validação de tipo de arquivo (.csv apenas)
+- Mensagens claras e acionáveis em português
+- UI de warning com botões "Continuar" e "Cancelar"
+- Backend retorna 413 (Payload Too Large) com mensagem estruturada
+
+**Arquivos modificados:**
+- `lib/upload-limits.ts` — Constantes centralizadas + helpers (NEW)
+- `app/dashboard/upload/page.tsx` — Validações frontend + UI de warning (+70 linhas)
+- `app/api/analyses/route.ts` — Validação de Content-Length e body size (+20 linhas)
+
+**Limites justificados:**
+- 50 MB suporta até ~5.000 produtos com 5 anos de histórico
+- Previne acidentes (CSV de 500MB+) e abuso
+- Warnings não bloqueiam uso legítimo
+
+**Testado com sucesso:**
+- Build passa sem erros
+- 3 camadas de validação implementadas
+- Mensagens de erro e warning funcionais
+
+**Aguardando teste manual e push.**
 
 ---
 
 ### Ordem de implementação (atualizada):
 1. ✅ **#9 Pareto 80/20** — COMPLETO e EM PRODUÇÃO
 2. ✅ **#8 Estoque parado + Stop Loss** — COMPLETO e EM PRODUÇÃO
-3. ✅ **#10 Velocidade de giro (Turnover)** — COMPLETO (aguardando deploy)
-4. **#11 Limite de payload** (quick win)
+3. ✅ **#10 Velocidade de giro (Turnover)** — COMPLETO e EM PRODUÇÃO
+4. ✅ **#11 Limite de payload** — COMPLETO (aguardando teste e deploy)
 5. **#12 Observabilidade** (antes de cobrar)
 6. **#7 Paralelizar XGBoost** (quando tiver clientes com catálogos grandes)
 
