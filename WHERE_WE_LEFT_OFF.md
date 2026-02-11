@@ -299,7 +299,15 @@ Tudo abaixo já está deployado e funcionando:
 **Build validado:**
 - `npm run build` passou sem erros TypeScript
 
-**Aguardando teste manual e push.**
+**Testado localmente:**
+- Batch queries funcionando (Clean 23% mais rápido)
+- Updates paralelos sem erro RLS
+- Pipeline completa sem erros
+
+**Deployado em produção (11/02/2026):**
+- Commit: `530cb02` pushed para `main`
+- Vercel: Frontend atualizado automaticamente
+- Render: Backend Python com XGBoost paralelo em deploy
 
 ---
 
