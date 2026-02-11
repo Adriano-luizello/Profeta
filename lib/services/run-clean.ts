@@ -45,19 +45,27 @@ export async function runClean(
       throw new Error('Erro ao buscar produtos')
     }
 
-    const productsWithHistory = await Promise.all(
-      products.map(async (p) => {
-        const { data: sales } = await supabase
-          .from('sales_history')
-          .select('quantity')
-          .eq('product_id', p.id)
-          .order('date', { ascending: true })
-        return {
-          ...p,
-          sales_history: sales?.map((s) => s.quantity) ?? []
-        }
-      })
-    )
+    // Buscar histórico de vendas em BATCH (1 query ao invés de N)
+    const productIds = products.map(p => p.id)
+    const { data: allSales } = await supabase
+      .from('sales_history')
+      .select('product_id, quantity')
+      .in('product_id', productIds)
+      .order('date', { ascending: true })
+    
+    // Agrupar por product_id em memória
+    const salesByProduct = new Map<string, number[]>()
+    for (const sale of allSales || []) {
+      const existing = salesByProduct.get(sale.product_id) || []
+      existing.push(sale.quantity)
+      salesByProduct.set(sale.product_id, existing)
+    }
+    
+    // Construir array de produtos com histórico
+    const productsWithHistory = products.map(p => ({
+      ...p,
+      sales_history: salesByProduct.get(p.id) ?? []
+    }))
 
     // ===== TIMING: LIMPEZA START =====
     const cleanStart = Date.now()
@@ -92,20 +100,40 @@ export async function runClean(
     
     const processingTime = cleanMs
 
+    // Updates paralelos de produtos limpos (produtos já existem, não precisa INSERT)
+    const validUpdates = []
     for (let i = 0; i < results.length; i++) {
       const r = results[i]
       const p = productsWithHistory[i]
       if (!r.success || !r.data) continue
-      await supabase
-        .from('products')
-        .update({
-          cleaned_name: r.data.cleaned_name,
-          refined_category: r.data.refined_category,
-          attributes: r.data.attributes,
-          seasonality: r.data.seasonality,
-          ai_confidence: r.data.ai_confidence
+      validUpdates.push({
+        id: p.id,
+        cleaned_name: r.data.cleaned_name,
+        refined_category: r.data.refined_category,
+        attributes: r.data.attributes,
+        seasonality: r.data.seasonality,
+        ai_confidence: r.data.ai_confidence
+      })
+    }
+    
+    if (validUpdates.length > 0) {
+      // Promise.all: N updates em paralelo (não sequencial)
+      const updateResults = await Promise.all(
+        validUpdates.map(product => {
+          const { id, ...updateData } = product
+          return supabase
+            .from('products')
+            .update(updateData)
+            .eq('id', id)
         })
-        .eq('id', p.id)
+      )
+      
+      // Log de erros (sem bloquear pipeline)
+      const errors = updateResults.filter(r => r.error)
+      if (errors.length > 0) {
+        console.error(`[Clean] ${errors.length}/${validUpdates.length} updates falharam`)
+        errors.forEach(e => console.error('  -', e.error))
+      }
     }
 
     // Atualizar produtos processados (não mudar status aqui, deixar para o pipeline)

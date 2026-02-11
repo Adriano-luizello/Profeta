@@ -272,34 +272,41 @@ class ProphetForecaster:
         # ============================================
 
         # ============================================
-        # FASE 3: XGBoost Forecasting
+        # FASE 3: XGBoost Forecasting (PARALELO)
         # ============================================
         # ===== TIMING: XGBOOST START =====
         xgb_start = time.time()
         
         if not use_synthetic and not sales_df.empty and by_product:
-            logger.info("🤖 Treinando modelos XGBoost por produto...")
+            logger.info("🤖 Treinando modelos XGBoost por produto (PARALELO)...")
 
             from services.xgboost_service import XGBoostForecaster
             xgb_forecaster = XGBoostForecaster()
-            xgboost_results = []
-
-            for product in products:
+            
+            # Função isolada para treinar um produto (roda em paralelo)
+            def train_single_product_xgboost(product: Dict) -> Optional[Dict]:
+                """
+                Treina XGBoost para um único produto.
+                Retorna resultado ou None se falhar/pular.
+                """
                 try:
+                    product_id = str(product["id"])
+                    product_name = product.get("cleaned_name", product.get("original_name", product_id))
+                    
                     # Buscar features deste produto
                     features_query = (
                         self.supabase.table("feature_store")
                         .select("*")
-                        .eq("product_id", str(product["id"]))
+                        .eq("product_id", product_id)
                         .order("feature_date", desc=False)
                         .execute()
                     )
 
                     if not features_query.data or len(features_query.data) < 6:
                         logger.warning(
-                            f"⏭️ XGBoost pulado para {product.get('cleaned_name', product['id'])}: poucos dados ({len(features_query.data) if features_query.data else 0} pontos)"
+                            f"⏭️ XGBoost pulado para {product_name}: poucos dados ({len(features_query.data) if features_query.data else 0} pontos)"
                         )
-                        continue
+                        return None
 
                     # Converter para DataFrame
                     features_df = pd.DataFrame(features_query.data)
@@ -321,9 +328,9 @@ class ProphetForecaster:
 
                     if len(features_df) < 6:
                         logger.warning(
-                            f"⏭️ XGBoost pulado para {product.get('cleaned_name', product['id'])}: dados insuficientes após merge"
+                            f"⏭️ XGBoost pulado para {product_name}: dados insuficientes após merge"
                         )
-                        continue
+                        return None
 
                     # Preparar dados
                     X, y = xgb_forecaster.prepare_training_data(features_df)
@@ -338,27 +345,51 @@ class ProphetForecaster:
                         n_periods=3,  # 30, 60, 90 dias (3 meses)
                     )
 
-                    # Preparar para salvar
-                    product_name = product.get("cleaned_name", product.get("original_name", product["id"]))
+                    mape_str = f"{result['mape']:.1f}%" if result["mape"] is not None else "N/A"
+                    logger.info(f"✅ XGBoost para {product_name}: MAPE={mape_str}, MAE={result['mae']:.1f}" if result["mae"] is not None else f"✅ XGBoost para {product_name}: MAPE={mape_str}")
 
-                    xgboost_results.append({
-                        "product_id": str(product["id"]),
+                    return {
+                        "product_id": product_id,
                         "product_name": product_name,
                         "mape": result["mape"],
                         "mae": result["mae"],
                         "forecast": forecast.to_dict("records"),
                         "feature_importance": result["feature_importance"],
                         "training_samples": len(X),
-                    })
-
-                    mape_str = f"{result['mape']:.1f}%" if result["mape"] is not None else "N/A"
-                    logger.info(f"✅ XGBoost para {product_name}: MAPE={mape_str}, MAE={result['mae']:.1f}" if result["mae"] is not None else f"✅ XGBoost para {product_name}: MAPE={mape_str}")
+                    }
 
                 except Exception as e:
-                    logger.error(f"❌ Erro XGBoost para produto {product['id']}: {e}")
+                    logger.error(f"❌ Erro XGBoost para produto {product.get('id', 'unknown')}: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
-                    continue
+                    return None
+            
+            # Paralelizar com ThreadPoolExecutor (mesmo padrão do Prophet)
+            total_products = len(products)
+            max_workers = min(8, total_products)
+            logger.info(f"⚡ Usando {max_workers} workers paralelos para XGBoost")
+            
+            xgboost_results = []
+            completed = 0
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_product = {
+                    executor.submit(train_single_product_xgboost, product): product
+                    for product in products
+                }
+                
+                for future in as_completed(future_to_product):
+                    product = future_to_product[future]
+                    completed += 1
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            xgboost_results.append(result)
+                            logger.info(f"  ✓ [{completed}/{total_products}] {result['product_name']}: XGBoost concluído")
+                        else:
+                            logger.debug(f"  ⏭️ [{completed}/{total_products}] {product.get('cleaned_name', product['id'])}: pulado")
+                    except Exception as e:
+                        logger.warning(f"  ✗ [{completed}/{total_products}] {product.get('id', 'unknown')}: {e}")
 
             # Salvar previsões XGBoost no banco
             if xgboost_results:
