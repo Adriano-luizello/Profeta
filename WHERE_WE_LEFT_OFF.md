@@ -67,11 +67,40 @@ Tudo abaixo já está deployado e funcionando:
 
 ---
 
-## 🎯 P2 — PRÓXIMA FASE (Começando agora)
+## 🎯 P2 — EM ANDAMENTO
 
-### Ordem de implementação decidida:
-1. **#9 Pareto 80/20** ← COMEÇANDO AGORA (mais fácil, mais visual, mais "wow")
-2. **#8 Estoque parado + Stop Loss** (maior valor de negócio)
+### ✅ P2 #9: Pareto 80/20 — COMPLETO (11/02/2026)
+
+**Implementado:**
+- Tool `get_pareto_analysis` no AI Assistant
+- Ranking de produtos por receita (últimos 90 dias, configurável)
+- Identificação de top 20% gerando 80% da receita
+- % contribuição e % acumulado por produto
+- Capital preso em estoque (stock × price)
+- Cruzamento com supply chain (urgência)
+
+**3 views disponíveis:**
+- `products`: Ranking completo com rank, receita, %, top 20%, urgência
+- `categories`: Receita agrupada por categoria
+- `at_risk`: Top sellers com risco de ruptura (critical/attention)
+
+**Arquivos modificados:**
+- `lib/dashboard-data.ts` — Interface `ParetoMetrics` + função `getParetoMetrics()`
+- `lib/analytics/chart-data-generator.ts` — Função `paretoTable()` com 3 views
+- `lib/ai/tool-definitions.ts` — Tool definition com rich description
+- `app/api/chat/route.ts` — Handler integration
+
+**Commits:**
+- `647fca9` feat(analytics): implement Pareto 80/20 analysis
+- `f9aa3ba` fix(pareto): resolve TypeScript type errors for null values
+
+**Testado e validado em produção.**
+
+---
+
+### Ordem de implementação (atualizada):
+1. ✅ **#9 Pareto 80/20** — COMPLETO
+2. **#8 Estoque parado + Stop Loss** ← PRÓXIMO (maior valor de negócio)
 3. **#10 Velocidade de giro (Turnover)** (faz junto com #8/#9)
 4. **#11 Limite de payload** (quick win)
 5. **#12 Observabilidade** (antes de cobrar)
