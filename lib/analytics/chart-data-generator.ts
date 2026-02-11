@@ -120,12 +120,14 @@ async function supplyChainTable(
   return { chartType: 'table', chartData: rows }
 }
 
-function formatUrgency(level: string): string {
+function formatUrgency(level: string | null): string {
+  if (!level) return '—'
   switch(level) {
     case 'critical': return '🔴 Crítico'
     case 'attention': return '🟡 Atenção'
     case 'informative': return '🔵 Informativo'
-    default: return '🟢 OK'
+    case 'ok': return '🟢 OK'
+    default: return '—'
   }
 }
 

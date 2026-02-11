@@ -576,7 +576,7 @@ export async function getParetoMetrics(
       is_top_20: false,     // calculado depois
       is_top_80_revenue: false,  // calculado depois
       urgency_level: null as ParetoMetrics['urgency_level'],
-      days_until_stockout: null
+      days_until_stockout: null as number | null
     }
   })
 
@@ -603,13 +603,13 @@ export async function getParetoMetrics(
     const supplyChainMetrics = await getSupplyChainMetrics(supabase, userId)
     const scMap = new Map(supplyChainMetrics.map(sc => [sc.product_id, sc]))
     
-    productMetrics.forEach(p => {
+    for (const p of productMetrics) {
       const sc = scMap.get(p.product_id)
       if (sc) {
         p.urgency_level = sc.urgency_level
-        p.days_until_stockout = sc.days_until_stockout
+        p.days_until_stockout = sc.days_until_stockout ?? null
       }
-    })
+    }
   } catch (error) {
     console.error('[pareto] Erro ao cruzar com supply chain:', error)
     // Continuar sem supply chain data
