@@ -98,10 +98,38 @@ Tudo abaixo já está deployado e funcionando:
 
 ---
 
+### ✅ P2 #8: Estoque Parado + Stop Loss — COMPLETO (11/02/2026)
+
+**Implementado:**
+- Tool `get_dead_stock_analysis` no AI Assistant
+- Classificação automática: ⚫ Parado (0 vendas) | 🟠 Lento (< 0.1 un/dia) | 🟢 Saudável
+- Cálculo de capital preso em estoque (stock × price)
+- Custo de oportunidade mensal (2% do capital)
+- Cruzamento com forecast (tendência: crescente, declinante, estável, zero)
+- Recomendações acionáveis: descontinuar, descontar, monitorar
+
+**3 views disponíveis:**
+- `all`: Lista detalhada de produtos problemáticos (dead + slow)
+- `dead`: Apenas produtos com zero vendas nos últimos 90 dias
+- `summary`: Resumo executivo com totais, capital preso e custos
+
+**Arquivos modificados:**
+- `lib/dashboard-data.ts` — Interface `DeadStockMetrics` + função `getDeadStockMetrics()`
+- `lib/analytics/chart-data-generator.ts` — Função `deadStockTable()` com 3 filtros
+- `lib/ai/tool-definitions.ts` — Tool definition com rich description
+- `app/api/chat/route.ts` — Handler integration
+
+**Commits:**
+- `cc6d48b` feat(analytics): implement dead stock and stop loss analysis
+
+**Testado localmente. Aguardando validação.**
+
+---
+
 ### Ordem de implementação (atualizada):
 1. ✅ **#9 Pareto 80/20** — COMPLETO
-2. **#8 Estoque parado + Stop Loss** ← PRÓXIMO (maior valor de negócio)
-3. **#10 Velocidade de giro (Turnover)** (faz junto com #8/#9)
+2. ✅ **#8 Estoque parado + Stop Loss** — COMPLETO
+3. **#10 Velocidade de giro (Turnover)** ← PRÓXIMO (faz junto com #8/#9)
 4. **#11 Limite de payload** (quick win)
 5. **#12 Observabilidade** (antes de cobrar)
 6. **#7 Paralelizar XGBoost** (quando tiver clientes com catálogos grandes)
