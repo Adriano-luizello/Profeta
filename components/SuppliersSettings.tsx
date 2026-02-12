@@ -113,149 +113,213 @@ export function SuppliersSettings() {
   return (
     <div id="fornecedores" className="space-y-6 scroll-mt-6">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+        <h2 className="mb-1 text-lg font-semibold text-profeta-text-primary">
           Fornecedores
         </h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Lead time e MOQ por fornecedor. Use em produtos para a tabela Supply Chain.
+        <p className="text-sm text-profeta-text-secondary">
+          Lead time e MOQ por fornecedor. Use em produtos para a tabela Supply
+          Chain.
         </p>
       </div>
 
       {error && (
-        <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-700 dark:text-red-300">
+        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600">
           {error}
         </div>
       )}
 
-      <form onSubmit={handleCreate} className="flex flex-wrap gap-3 items-end p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
-        <div className="flex-1 min-w-[160px]">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nome</label>
+      <form
+        onSubmit={handleCreate}
+        className="flex flex-wrap items-end gap-3 rounded-xl border border-profeta-border bg-profeta-surface p-4"
+      >
+        <div className="min-w-[160px] flex-1">
+          <label className="mb-1 block text-sm font-medium text-profeta-text-secondary">
+            Nome
+          </label>
           <input
             type="text"
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             placeholder="Ex.: Fornecedor BR"
-            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            className="w-full rounded-xl border border-profeta-border bg-white px-4 py-2.5 text-sm text-profeta-text-primary placeholder:text-profeta-text-muted focus:border-profeta-green focus:outline-none focus:ring-2 focus:ring-profeta-green/20"
             required
           />
         </div>
         <div className="w-28">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Lead time (d)</label>
+          <label className="mb-1 block text-sm font-medium text-profeta-text-secondary">
+            Lead time (d)
+          </label>
           <input
             type="number"
             min={1}
             max={365}
             value={form.lead_time_days}
-            onChange={(e) => setForm((f) => ({ ...f, lead_time_days: Math.max(1, parseInt(e.target.value, 10) || 30) }))}
-            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                lead_time_days: Math.max(1, parseInt(e.target.value, 10) || 30),
+              }))
+            }
+            className="w-full rounded-xl border border-profeta-border bg-white px-4 py-2.5 text-sm text-profeta-text-primary focus:border-profeta-green focus:outline-none focus:ring-2 focus:ring-profeta-green/20"
           />
         </div>
         <div className="w-28">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">MOQ (un)</label>
+          <label className="mb-1 block text-sm font-medium text-profeta-text-secondary">
+            MOQ (un)
+          </label>
           <input
             type="number"
             min={0}
             value={form.moq}
-            onChange={(e) => setForm((f) => ({ ...f, moq: Math.max(0, parseInt(e.target.value, 10) || 100) }))}
-            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                moq: Math.max(0, parseInt(e.target.value, 10) || 100),
+              }))
+            }
+            className="w-full rounded-xl border border-profeta-border bg-white px-4 py-2.5 text-sm text-profeta-text-primary focus:border-profeta-green focus:outline-none focus:ring-2 focus:ring-profeta-green/20"
           />
         </div>
-        <div className="flex-1 min-w-[140px]">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notas</label>
+        <div className="min-w-[140px] flex-1">
+          <label className="mb-1 block text-sm font-medium text-profeta-text-secondary">
+            Notas
+          </label>
           <input
             type="text"
             value={form.notes}
             onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
             placeholder="Opcional"
-            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+            className="w-full rounded-xl border border-profeta-border bg-white px-4 py-2.5 text-sm text-profeta-text-primary placeholder:text-profeta-text-muted focus:border-profeta-green focus:outline-none focus:ring-2 focus:ring-profeta-green/20"
           />
         </div>
         <button
           type="submit"
           disabled={submitting || !form.name.trim()}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded-xl bg-profeta-green px-6 py-2.5 font-medium text-white transition-colors hover:bg-profeta-green/90 disabled:opacity-50"
         >
-          {submitting ? 'Salvando…' : 'Adicionar'}
+          {submitting ? "Salvando…" : "Adicionar"}
         </button>
       </form>
 
       {loading ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">Carregando fornecedores…</p>
+        <p className="text-sm text-profeta-text-secondary">
+          Carregando fornecedores…
+        </p>
       ) : suppliers.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">Nenhum fornecedor. Adicione um acima.</p>
+        <p className="text-sm text-profeta-text-secondary">
+          Nenhum fornecedor. Adicione um acima.
+        </p>
       ) : (
-        <ul className="space-y-2">
-          {suppliers.map((s) => (
-            <li
-              key={s.id}
-              className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
-            >
-              {editingId === s.id ? (
-                <>
-                  <input
-                    type="text"
-                    value={editForm.name ?? s.name}
-                    onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                    className="flex-1 min-w-[120px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-                  />
-                  <input
-                    type="number"
-                    min={1}
-                    max={365}
-                    value={editForm.lead_time_days ?? s.lead_time_days}
-                    onChange={(e) => setEditForm((f) => ({ ...f, lead_time_days: parseInt(e.target.value, 10) || 30 }))}
-                    className="w-20 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    value={editForm.moq ?? s.moq}
-                    onChange={(e) => setEditForm((f) => ({ ...f, moq: parseInt(e.target.value, 10) || 100 }))}
-                    className="w-20 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleUpdate(s.id)}
-                    disabled={submitting}
-                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
-                  >
-                    Salvar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setEditingId(null); setEditForm({}) }}
-                    className="text-sm text-gray-500 hover:underline"
-                  >
-                    Cancelar
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="font-medium text-gray-900 dark:text-white">{s.name}</span>
-                  <span className="text-sm text-gray-500 dark:text-gray-400">{s.lead_time_days}d</span>
-                  <span className="text-sm text-gray-500 dark:text-gray-400">MOQ {s.moq}</span>
-                  {s.notes && <span className="text-sm text-gray-400 truncate max-w-[200px]" title={s.notes}>{s.notes}</span>}
-                  <button
-                    type="button"
-                    onClick={() => { setEditingId(s.id); setEditForm({ name: s.name, lead_time_days: s.lead_time_days, moq: s.moq }) }}
-                    disabled={submitting}
-                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 ml-auto"
-                  >
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(s.id)}
-                    disabled={submitting}
-                    className="text-sm text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                  >
-                    Remover
-                  </button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
+        <div className="overflow-hidden rounded-card border border-profeta-border bg-profeta-card">
+          <ul className="divide-y divide-profeta-border">
+            {suppliers.map((s) => (
+              <li
+                key={s.id}
+                className="flex flex-wrap items-center gap-3 p-4 transition-colors hover:bg-profeta-surface/50"
+              >
+                {editingId === s.id ? (
+                  <>
+                    <input
+                      type="text"
+                      value={editForm.name ?? s.name}
+                      onChange={(e) =>
+                        setEditForm((f) => ({ ...f, name: e.target.value }))
+                      }
+                      className="min-w-[120px] flex-1 rounded-xl border border-profeta-border bg-white px-4 py-2.5 text-sm text-profeta-text-primary focus:border-profeta-green focus:outline-none focus:ring-2 focus:ring-profeta-green/20"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={editForm.lead_time_days ?? s.lead_time_days}
+                      onChange={(e) =>
+                        setEditForm((f) => ({
+                          ...f,
+                          lead_time_days:
+                            parseInt(e.target.value, 10) || 30,
+                        }))
+                      }
+                      className="w-20 rounded-xl border border-profeta-border bg-white px-4 py-2.5 text-sm text-profeta-text-primary focus:border-profeta-green focus:outline-none focus:ring-2 focus:ring-profeta-green/20"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      value={editForm.moq ?? s.moq}
+                      onChange={(e) =>
+                        setEditForm((f) => ({
+                          ...f,
+                          moq: parseInt(e.target.value, 10) || 100,
+                        }))
+                      }
+                      className="w-20 rounded-xl border border-profeta-border bg-white px-4 py-2.5 text-sm text-profeta-text-primary focus:border-profeta-green focus:outline-none focus:ring-2 focus:ring-profeta-green/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleUpdate(s.id)}
+                      disabled={submitting}
+                      className="text-sm font-medium text-profeta-green hover:underline disabled:opacity-50"
+                    >
+                      Salvar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(null);
+                        setEditForm({});
+                      }}
+                      className="rounded-xl border border-profeta-border px-4 py-2.5 text-sm font-medium text-profeta-text-secondary transition-colors hover:bg-profeta-surface"
+                    >
+                      Cancelar
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium text-profeta-text-primary">
+                      {s.name}
+                    </span>
+                    <span className="text-sm text-profeta-text-secondary">
+                      {s.lead_time_days}d
+                    </span>
+                    <span className="text-sm text-profeta-text-secondary">
+                      MOQ {s.moq}
+                    </span>
+                    {s.notes && (
+                      <span
+                        className="max-w-[200px] truncate text-sm text-profeta-text-muted"
+                        title={s.notes}
+                      >
+                        {s.notes}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(s.id);
+                        setEditForm({
+                          name: s.name,
+                          lead_time_days: s.lead_time_days,
+                          moq: s.moq,
+                        });
+                      }}
+                      disabled={submitting}
+                      className="ml-auto text-sm font-medium text-profeta-green hover:underline disabled:opacity-50"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(s.id)}
+                      disabled={submitting}
+                      className="text-sm font-medium text-profeta-red hover:underline disabled:opacity-50"
+                    >
+                      Remover
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   )

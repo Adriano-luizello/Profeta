@@ -2,8 +2,18 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Send, Maximize2, Minimize2, Sparkles, TrendingUp, Package, AlertTriangle, BarChart3, Lightbulb, X } from 'lucide-react'
+import { Send, Maximize2, Sparkles, TrendingUp, Package, AlertTriangle, BarChart3, Lightbulb, X } from 'lucide-react'
+import { ProfetaLogo } from '@/components/profeta'
 import { ChatMessage, type ChatMessageData } from './ChatMessage'
+
+export interface ChatSidebarProps {
+  /** Quando definido, envia automaticamente como mensagem do usuário (trigger externo da sidebar) */
+  initialPrompt?: string | null
+  /** Callback chamado após o prompt ser enviado (para o parent atualizar estado se necessário) */
+  onPromptSent?: () => void
+  /** Quando definido, exibe botão de fechar no header */
+  onClose?: () => void
+}
 
 const QUICK_TRIGGERS = [
   { icon: <TrendingUp className="size-3" />, label: 'Previsão', query: 'Qual a previsão de demanda para os próximos 30 dias?' },
@@ -20,17 +30,27 @@ const INITIAL_MESSAGE: ChatMessageData = {
 }
 
 /** Histórico no formato da API Claude (pass-through para contexto multi-turno) */
-export function ChatSidebar() {
+export function ChatSidebar({ initialPrompt, onPromptSent, onClose }: ChatSidebarProps = {}) {
   const [messages, setMessages] = useState<ChatMessageData[]>([INITIAL_MESSAGE])
   const [conversationHistory, setConversationHistory] = useState<unknown[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
+  const lastSentPromptRef = useRef<string | null>(null)
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
+
+  // Trigger externo: quando initialPrompt muda, auto-envia como mensagem
+  useEffect(() => {
+    const prompt = typeof initialPrompt === 'string' ? initialPrompt.trim() : ''
+    if (!prompt || prompt === lastSentPromptRef.current) return
+    lastSentPromptRef.current = prompt
+    send(prompt)
+    onPromptSent?.()
+  }, [initialPrompt])
 
   useEffect(() => {
     if (!expanded) return
@@ -139,53 +159,66 @@ export function ChatSidebar() {
   const toggleOverlay = () => setExpanded((e) => !e)
 
   const header = (
-    <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-gray-800 dark:to-gray-800 shrink-0">
+    <div className="flex items-center justify-between gap-4 px-4 py-3 border-b border-profeta-border bg-profeta-card shrink-0">
       <div className="flex items-center gap-2 min-w-0">
-        <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 shrink-0">
-          <Sparkles className="size-4 text-white" />
-        </div>
+        <ProfetaLogo size={28} variant="default" />
         <div className="min-w-0">
-          <h2 className="font-semibold text-gray-900 dark:text-white text-sm">AI Demand Assistant</h2>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Previsão inteligente</p>
+          <h2 className="font-semibold text-profeta-text-primary text-sm">AI Assistant</h2>
+          <p className="flex items-center gap-1 text-xs text-profeta-green">
+            <span className="h-1.5 w-1.5 rounded-full bg-profeta-green animate-dot-pulse" />
+            Online
+          </p>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={toggleOverlay}
-        className={`shrink-0 rounded-lg font-medium transition-colors ${
-          expanded
-            ? 'flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-white hover:bg-gray-300 dark:hover:bg-gray-500 border border-gray-300 dark:border-gray-500'
-            : 'p-2 hover:bg-black/5 dark:hover:bg-white/5'
-        }`}
-        aria-label={expanded ? 'Fechar overlay' : 'Expandir tela cheia'}
-      >
-        {expanded ? (
-          <>
+      <div className="flex shrink-0 items-center gap-1">
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-component p-2 text-profeta-text-muted transition-colors hover:bg-profeta-elevated hover:text-profeta-text-primary"
+            aria-label="Fechar chat"
+          >
             <X className="size-4" />
-            <span className="text-sm">Fechar</span>
-          </>
-        ) : (
-          <Maximize2 className="size-4" />
+          </button>
         )}
-      </button>
+        <button
+          type="button"
+          onClick={toggleOverlay}
+          className={`shrink-0 rounded-component font-medium transition-colors ${
+            expanded
+              ? 'flex items-center gap-2 px-3 py-2 bg-profeta-elevated text-profeta-text-primary hover:bg-profeta-border border border-profeta-border'
+              : 'p-2 text-profeta-text-muted hover:bg-profeta-elevated hover:text-profeta-text-primary'
+          }`}
+          aria-label={expanded ? 'Fechar overlay' : 'Expandir tela cheia'}
+        >
+          {expanded ? (
+            <>
+              <X className="size-4" />
+              <span className="text-sm">Fechar</span>
+            </>
+          ) : (
+            <Maximize2 className="size-4" />
+          )}
+        </button>
+      </div>
     </div>
   )
 
   const messagesArea = (
-    <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-profeta-bg p-4 space-y-4">
       {messages.map((m) => (
         <ChatMessage key={m.id} message={m} />
       ))}
       {loading && (
         <div className="flex items-start gap-3">
-          <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600">
+          <div className="flex h-9 w-9 items-center justify-center rounded-component bg-profeta-green shrink-0">
             <Sparkles className="size-4 text-white" />
           </div>
-          <div className="rounded-2xl px-4 py-3 bg-gray-100 dark:bg-gray-700">
+          <div className="rounded-2xl px-4 py-3 bg-profeta-elevated">
             <div className="flex gap-1">
-              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <span className="w-2 h-2 bg-profeta-text-muted rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-2 h-2 bg-profeta-text-muted rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-2 h-2 bg-profeta-text-muted rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
           </div>
         </div>
@@ -195,7 +228,7 @@ export function ChatSidebar() {
   )
 
   const inputArea = (
-    <div className="p-4 border-t border-gray-200 dark:border-gray-700 space-y-3 shrink-0">
+    <div className="space-y-3 border-t border-profeta-border bg-profeta-card p-4 shrink-0">
       <div className="flex flex-wrap gap-2">
         {QUICK_TRIGGERS.map((t, i) => (
           <button
@@ -203,7 +236,7 @@ export function ChatSidebar() {
             type="button"
             onClick={() => handleTrigger(t.query)}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-component border border-profeta-border bg-profeta-elevated px-3 py-1.5 text-xs font-medium text-profeta-text-secondary hover:bg-profeta-border disabled:opacity-50"
           >
             {t.icon}
             {t.label}
@@ -217,14 +250,14 @@ export function ChatSidebar() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Pergunte sobre demanda, estoque, previsões..."
-          className="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1 rounded-component border border-profeta-border bg-profeta-bg px-4 py-2 text-sm text-profeta-text-primary placeholder-profeta-text-muted focus:outline-none focus:ring-2 focus:ring-profeta-green"
           disabled={loading}
         />
         <button
           type="button"
           onClick={handleSend}
           disabled={!input.trim() || loading}
-          className="shrink-0 p-2 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:opacity-90 disabled:opacity-50"
+          className="shrink-0 rounded-component bg-profeta-green p-2 text-white hover:opacity-90 disabled:opacity-50"
         >
           <Send className="size-5" />
         </button>
@@ -243,7 +276,7 @@ export function ChatSidebar() {
           aria-hidden
           onClick={() => setExpanded(false)}
         />
-        <div className="fixed top-0 bottom-0 left-56 z-50 flex flex-col w-[calc(100vw-14rem)] max-w-[calc(100vw-14rem)] h-screen max-h-screen min-w-0 overflow-hidden bg-white dark:bg-gray-800 shadow-2xl">
+        <div className="fixed top-0 bottom-0 left-56 z-50 flex flex-col w-[calc(100vw-14rem)] max-w-[calc(100vw-14rem)] h-screen max-h-screen min-w-0 overflow-hidden bg-profeta-card shadow-2xl">
               {header}
               {messagesArea}
               {inputArea}
@@ -258,7 +291,7 @@ export function ChatSidebar() {
   }
 
   return (
-    <div className="h-full flex flex-col w-80 shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700">
+    <div className="flex h-full w-full flex-col bg-profeta-card">
       {header}
       {messagesArea}
       {inputArea}

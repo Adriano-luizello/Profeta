@@ -137,6 +137,157 @@ export async function getSalesByDate(
     .sort((a, b) => a.date.localeCompare(b.date))
 }
 
+export interface RevenuePoint {
+  date: string
+  revenue: number
+}
+
+/**
+ * Agrega receita por data para o usuário (análise mais recente).
+ * Limita aos últimos `days` dias.
+ */
+export async function getRevenueByDate(
+  supabase: SupabaseClient,
+  userId: string,
+  days: number = DEFAULT_DAYS
+): Promise<RevenuePoint[]> {
+  const since = new Date()
+  since.setDate(since.getDate() - days)
+  const sinceStr = since.toISOString().slice(0, 10)
+
+  const analysisId = await getLatestAnalysis(supabase, userId)
+  if (!analysisId) return []
+
+  const productIds = await getProductIds(supabase, analysisId)
+  if (!productIds.length) return []
+
+  let { data: rows, error: salesError } = await supabase
+    .from('sales_history')
+    .select('date, revenue')
+    .in('product_id', productIds)
+    .gte('date', sinceStr)
+
+  if (salesError) {
+    console.error('[dashboard] getRevenueByDate sales_history:', salesError.message)
+    return []
+  }
+  if (!rows?.length) {
+    const fallback = await supabase
+      .from('sales_history')
+      .select('date, revenue')
+      .in('product_id', productIds)
+    if (fallback.error) {
+      console.error('[dashboard] getRevenueByDate sales_history (fallback):', fallback.error.message)
+      return []
+    }
+    rows = fallback.data
+  }
+  if (!rows?.length) return []
+
+  const byDate = new Map<string, number>()
+  for (const r of rows) {
+    const d = String(r.date)
+    const rev = Number(r.revenue ?? 0)
+    byDate.set(d, (byDate.get(d) ?? 0) + rev)
+  }
+  return Array.from(byDate.entries())
+    .map(([date, revenue]) => ({ date, revenue }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+export interface RevenueTotals {
+  revenue30d: number
+  revenue90d: number
+  unitsSold30d: number
+  unitsSold90d: number
+}
+
+/**
+ * Retorna receita e unidades vendidas para os períodos de 30 e 90 dias.
+ */
+export async function getRevenueTotals(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<RevenueTotals> {
+  const now = new Date()
+  const since90 = new Date(now)
+  since90.setDate(since90.getDate() - 90)
+  const since30 = new Date(now)
+  since30.setDate(since30.getDate() - 30)
+  const since90Str = since90.toISOString().slice(0, 10)
+  const since30Str = since30.toISOString().slice(0, 10)
+
+  const analysisId = await getLatestAnalysis(supabase, userId)
+  if (!analysisId) {
+    return {
+      revenue30d: 0,
+      revenue90d: 0,
+      unitsSold30d: 0,
+      unitsSold90d: 0,
+    }
+  }
+
+  const productIds = await getProductIds(supabase, analysisId)
+  if (!productIds.length) {
+    return {
+      revenue30d: 0,
+      revenue90d: 0,
+      unitsSold30d: 0,
+      unitsSold90d: 0,
+    }
+  }
+
+  const { data: rows, error } = await supabase
+    .from('sales_history')
+    .select('date, quantity, revenue')
+    .in('product_id', productIds)
+    .gte('date', since90Str)
+
+  if (error) {
+    console.error('[dashboard] getRevenueTotals sales_history:', error.message)
+    return {
+      revenue30d: 0,
+      revenue90d: 0,
+      unitsSold30d: 0,
+      unitsSold90d: 0,
+    }
+  }
+  if (!rows?.length) {
+    return {
+      revenue30d: 0,
+      revenue90d: 0,
+      unitsSold30d: 0,
+      unitsSold90d: 0,
+    }
+  }
+
+  let revenue30d = 0
+  let revenue90d = 0
+  let unitsSold30d = 0
+  let unitsSold90d = 0
+
+  for (const r of rows) {
+    const d = String(r.date)
+    const qty = Number(r.quantity ?? 0)
+    const rev = Number(r.revenue ?? 0)
+
+    revenue90d += rev
+    unitsSold90d += qty
+
+    if (d >= since30Str) {
+      revenue30d += rev
+      unitsSold30d += qty
+    }
+  }
+
+  return {
+    revenue30d,
+    revenue90d,
+    unitsSold30d,
+    unitsSold90d,
+  }
+}
+
 /**
  * Agrega previsões por data (análise mais recente).
  * Só retorna dados se houver persistência (ex.: via pipeline).
@@ -1054,4 +1205,221 @@ export async function getTurnoverMetrics(
   })
 
   return turnoverMetrics
+}
+
+export interface RevenueByProductRow {
+  product_id: string
+  cleaned_name: string
+  refined_category: string | null
+  total_revenue: number
+  total_quantity: number
+}
+
+/**
+ * Receita por produto no período especificado. Usado para Top 5 Produtos
+ * respeitando o period selector (30/60/90 dias).
+ */
+export async function getRevenueByProduct(
+  supabase: SupabaseClient,
+  userId: string,
+  days: number = 30
+): Promise<RevenueByProductRow[]> {
+  const analysisId = await getLatestAnalysis(supabase, userId)
+  if (!analysisId) return []
+
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - days)
+  const cutoffStr = cutoffDate.toISOString().slice(0, 10)
+
+  const productIds = await getProductIds(supabase, analysisId)
+  if (!productIds.length) return []
+
+  const { data: sales, error: salesError } = await supabase
+    .from('sales_history')
+    .select('product_id, revenue, quantity')
+    .in('product_id', productIds)
+    .gte('date', cutoffStr)
+
+  if (salesError) {
+    console.error('[dashboard] getRevenueByProduct sales_history:', salesError.message)
+    return []
+  }
+  if (!sales?.length) return []
+
+  const uniqueProductIds = [...new Set(sales.map((s) => s.product_id))]
+  const { data: products } = await supabase
+    .from('products')
+    .select('id, cleaned_name, refined_category')
+    .in('id', uniqueProductIds)
+
+  const productMap = new Map((products || []).map((p) => [p.id, p]))
+
+  const aggregated = new Map<
+    string,
+    { product_id: string; cleaned_name: string; refined_category: string | null; total_revenue: number; total_quantity: number }
+  >()
+
+  for (const sale of sales) {
+    const pid = sale.product_id
+    const product = productMap.get(pid)
+    const existing = aggregated.get(pid)
+
+    const rev = Number(sale.revenue ?? 0)
+    const qty = Number(sale.quantity ?? 0)
+
+    if (existing) {
+      existing.total_revenue += rev
+      existing.total_quantity += qty
+    } else {
+      aggregated.set(pid, {
+        product_id: pid,
+        cleaned_name: product?.cleaned_name ?? 'Desconhecido',
+        refined_category: product?.refined_category ?? null,
+        total_revenue: rev,
+        total_quantity: qty,
+      })
+    }
+  }
+
+  return Array.from(aggregated.values()).sort((a, b) => b.total_revenue - a.total_revenue)
+}
+
+export interface SupplyChainBySupplierRow {
+  supplier_name: string
+  products: {
+    product_name: string
+    recommended_order_qty: number
+    urgency_level: string
+    days_until_stockout: number | null
+    current_stock: number
+    moq: number | null
+  }[]
+  total_order_qty: number
+  total_moq: number | null
+  worst_urgency: string
+  earliest_stockout_days: number | null
+  product_count: number
+  lead_time_days: number
+}
+
+/**
+ * Agrupa métricas de supply chain por fornecedor. Usado no card
+ * "Pedidos Sugeridos por Fornecedor".
+ */
+export async function getSupplyChainBySupplier(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<SupplyChainBySupplierRow[]> {
+  const metrics = await getSupplyChainMetrics(supabase, userId)
+  if (!metrics?.length) return []
+
+  const urgencyPriority: Record<string, number> = {
+    critical: 3,
+    attention: 2,
+    informative: 1,
+    ok: 0,
+  }
+
+  const supplierMap = new Map<string, SupplyChainMetrics[]>()
+  for (const m of metrics) {
+    const supplier = m.supplier_name?.trim() || 'Sem fornecedor'
+    const list = supplierMap.get(supplier) ?? []
+    list.push(m)
+    supplierMap.set(supplier, list)
+  }
+
+  return Array.from(supplierMap.entries())
+    .map(([supplier_name, products]) => {
+      const total_order_qty = products.reduce((s, p) => s + (p.recommended_order_qty ?? 0), 0)
+      const moqs = products.map((p) => p.moq).filter((m): m is number => m != null && m > 0)
+      const total_moq = moqs.length > 0 ? Math.max(...moqs) : null
+
+      const worst_urgency = products.reduce(
+        (worst, p) =>
+          (urgencyPriority[p.urgency_level] ?? 0) > (urgencyPriority[worst] ?? 0)
+            ? p.urgency_level
+            : worst,
+        'ok'
+      )
+
+      const stockoutDays = products
+        .map((p) => p.days_until_stockout)
+        .filter((d): d is number => d != null && typeof d === 'number')
+      const earliest_stockout_days = stockoutDays.length > 0 ? Math.min(...stockoutDays) : null
+
+      const lead_time_days = products[0]?.lead_time_days ?? 30
+
+      return {
+        supplier_name,
+        products: products.map((p) => ({
+          product_name: p.product_name || 'Desconhecido',
+          recommended_order_qty: p.recommended_order_qty ?? 0,
+          urgency_level: p.urgency_level || 'ok',
+          days_until_stockout: p.days_until_stockout ?? null,
+          current_stock: p.current_stock ?? 0,
+          moq: p.moq ?? null,
+        })),
+        total_order_qty,
+        total_moq,
+        worst_urgency,
+        earliest_stockout_days,
+        product_count: products.length,
+        lead_time_days,
+      }
+    })
+    .sort(
+      (a, b) => (urgencyPriority[b.worst_urgency] ?? 0) - (urgencyPriority[a.worst_urgency] ?? 0)
+    )
+}
+
+export interface CapitalDistributionRow {
+  healthy: { total: number; product_count: number }
+  attention: { total: number; product_count: number }
+  dead: { total: number; product_count: number }
+  total_capital: number
+  dead_stock_monthly_cost: number
+}
+
+/**
+ * Distribuição do capital em estoque por status (saudável, atenção, parado).
+ * Usado no card "Capital em Estoque".
+ */
+export async function getCapitalDistribution(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<CapitalDistributionRow> {
+  const deadStockMetrics = await getDeadStockMetrics(supabase, userId)
+  const result: CapitalDistributionRow = {
+    healthy: { total: 0, product_count: 0 },
+    attention: { total: 0, product_count: 0 },
+    dead: { total: 0, product_count: 0 },
+    total_capital: 0,
+    dead_stock_monthly_cost: 0,
+  }
+
+  if (!deadStockMetrics?.length) return result
+
+  for (const p of deadStockMetrics) {
+    const capital = Number(p.capital_locked ?? 0)
+    result.total_capital += capital
+
+    switch (p.status) {
+      case 'dead':
+        result.dead.total += capital
+        result.dead.product_count += 1
+        result.dead_stock_monthly_cost += Number(p.monthly_storage_cost ?? 0)
+        break
+      case 'slow':
+        result.attention.total += capital
+        result.attention.product_count += 1
+        break
+      case 'healthy':
+      default:
+        result.healthy.total += capital
+        result.healthy.product_count += 1
+        break
+    }
+  }
+
+  return result
 }

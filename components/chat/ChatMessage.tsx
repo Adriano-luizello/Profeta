@@ -22,22 +22,22 @@ export function ChatMessage({ message }: ChatMessageProps) {
   return (
     <div className={`flex items-start gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
-        className={`shrink-0 p-2 rounded-lg ${
-          isUser ? 'bg-gray-200 dark:bg-gray-600' : 'bg-gradient-to-br from-blue-500 to-purple-600'
+        className={`shrink-0 rounded-component p-2 ${
+          isUser ? 'bg-profeta-green/20 text-profeta-green' : 'bg-profeta-green text-white'
         }`}
       >
         {isUser ? (
-          <User className="size-4 text-gray-700 dark:text-gray-200" />
+          <User className="size-4" />
         ) : (
-          <Sparkles className="size-4 text-white" />
+          <Sparkles className="size-4" />
         )}
       </div>
       <div className={`flex-1 min-w-0 ${isUser ? 'flex justify-end' : ''}`}>
         <div
           className={`rounded-2xl px-4 py-3 max-w-[85%] ${
             isUser
-              ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white'
-              : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              ? 'bg-profeta-green text-white'
+              : 'bg-profeta-bg text-profeta-text-primary'
           }`}
         >
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>

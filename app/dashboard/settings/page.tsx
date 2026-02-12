@@ -1,33 +1,36 @@
-import Link from 'next/link'
-import { SuppliersSettings } from '@/components/SuppliersSettings'
-import { ClearDataButton } from '@/components/ClearDataButton'
+import Link from "next/link";
+import { SuppliersSettings } from "@/components/SuppliersSettings";
+import { ClearDataButton } from "@/components/ClearDataButton";
 
 export default function SettingsPage() {
   return (
-    <div className="p-6 md:p-8 max-w-4xl space-y-8">
+    <div className="mx-auto max-w-4xl space-y-8 p-6 md:p-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+        <h1 className="text-2xl font-semibold text-profeta-text-primary">
           Configurações
         </h1>
-        <p className="text-gray-600 dark:text-gray-400">
-          Supply chain,{' '}
-          <Link href="/dashboard/settings#fornecedores" className="text-blue-600 dark:text-blue-400 hover:underline">
+        <p className="mt-0.5 text-sm text-profeta-text-secondary">
+          Supply chain,{" "}
+          <Link
+            href="/dashboard/settings#fornecedores"
+            className="text-profeta-green hover:underline"
+          >
             fornecedores
-          </Link>{' '}
+          </Link>{" "}
           e preferências. Adicione, edite ou remova fornecedores abaixo.
         </p>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+      <div className="rounded-card border border-profeta-border bg-profeta-card p-6 shadow-card">
         <SuppliersSettings />
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+      <div className="rounded-card border border-profeta-border bg-profeta-card p-6 shadow-card">
+        <h2 className="mb-4 text-lg font-semibold text-profeta-text-primary">
           Dados
         </h2>
         <ClearDataButton />
       </div>
     </div>
-  )
+  );
 }

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "seed:demo": "npx tsx scripts/seed-demo-data.ts",
     "dev": "concurrently \"npm run dev:next\" \"npm run dev:forecaster\"",
     "dev:next": "WATCHPACK_POLLING=true next dev --hostname 127.0.0.1",
     "dev:forecaster": "cd profeta-forecaster && ./start.sh",
@@ -40,6 +41,7 @@
     "undici": "^6.23.0"
   },
   "devDependencies": {
+    "tsx": "^4.19.2",
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.6",
     "@types/react-dom": "^19.0.2",
