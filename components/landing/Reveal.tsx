@@ -10,6 +10,8 @@ interface RevealProps {
   distance?: number;
   duration?: number;
   className?: string;
+  /** IntersectionObserver threshold (0–1). Ex.: 0.1 para revelar assim que 10% entrar na viewport */
+  threshold?: number;
 }
 
 export function Reveal({
@@ -19,8 +21,9 @@ export function Reveal({
   distance = 30,
   duration = 700,
   className = "",
+  threshold,
 }: RevealProps) {
-  const { ref, isVisible } = useScrollReveal();
+  const { ref, isVisible } = useScrollReveal(threshold ?? 0.15);
 
   const transforms = {
     up: `translateY(${distance}px)`,

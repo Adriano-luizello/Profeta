@@ -1,6 +1,23 @@
-# PROFETA — Estado Atual (Atualizado 11/02/2026)
+# PROFETA — Estado Atual (Atualizado 12/02/2026)
 
 ## ⚠️ IMPORTANTE: Este documento substitui qualquer WHERE_WE_LEFT_OFF anterior. O estado abaixo reflete o que está REALMENTE em produção.
+
+---
+
+## 📍 Onde paramos (12/02/2026)
+
+### Feito e no main (push concluído)
+- **Landing page:** Redesign com hero (dashboard) e seção demo (gráfico) usando screenshots reais; containers com `object-contain` para não cortar imagens.
+- **Seção perguntas:** Cada pergunta (01, 02, 03) em card com borda, hover e padding (`bg-profeta-surface/50`).
+- **Seção confiança:** Layout editorial assimétrico (grid 3+2): texto + eyebrow à esquerda, chips de credenciais inline, coluna direita com card verde (3 modelos ML), mini-cards (90d, 3 níveis) e bloco “Early access”.
+- **i18n:** Novas chaves `trust.eyebrow` e `trust.stats_*` (pt/en).
+- **Seed demo:** Script `scripts/seed-demo-data.ts` para perfil com dados sintéticos (dashboard completo para screenshots); substitui análise de demo antiga ao rodar de novo; carrega `.env.local`; comando: `DEMO_USER_EMAIL=... npm run seed:demo`.
+- **Build:** `npm run build` passando; deploy em produção deve funcionar com env vars configuradas.
+
+### Próximo passo: Waitlist
+- **Precisamos garantir tabelas para armazenar os emails da waitlist.**
+- Já existe a migration `supabase/migrations/021_waitlist.sql`: cria tabela `public.waitlist` (`id`, `email`, `created_at`, `locale`) com RLS (insert anônimo permitido, leitura só autenticada).
+- **A fazer:** (1) Aplicar a migration 021 em produção no Supabase (se ainda não foi); (2) Conectar o formulário da landing (seção CTA “Entrar na Waitlist”) à API que insere em `waitlist` e expor essa API se ainda não existir.
 
 ---
 
@@ -389,6 +406,7 @@ recommendations — id, product_id, type, action, urgency, risk_level,
                   estimated_stockout_date, ...
 analyses        — id, user_id, status, pipeline_started_at, ...
 rate_limits     — id, user_id, message_count, token_count, ...
+waitlist        — id, email, created_at, locale (migration 021; para emails da landing)
 ```
 
 ### Tools existentes no AI Assistant

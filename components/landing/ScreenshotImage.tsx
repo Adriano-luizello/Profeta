@@ -12,6 +12,8 @@ interface ScreenshotImageProps {
   className?: string;
   /** Classes do container da imagem (ex: aspect-video, rounded-2xl) */
   imageClassName?: string;
+  /** Atributo sizes do Next/Image para otimização (ex: "(max-width: 1024px) 100vw, 880px") */
+  sizes?: string;
 }
 
 /**
@@ -25,6 +27,7 @@ export function ScreenshotImage({
   placeholder,
   className = "",
   imageClassName = "",
+  sizes = "(max-width: 1024px) 100vw, 672px",
 }: ScreenshotImageProps) {
   const [error, setError] = useState(false);
 
@@ -38,7 +41,7 @@ export function ScreenshotImage({
         src={src}
         alt={alt}
         fill
-        sizes="(max-width: 1024px) 100vw, 672px"
+        sizes={sizes}
         className={`object-contain ${imageClassName}`}
         onError={() => setError(true)}
       />
